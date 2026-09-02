@@ -120,3 +120,25 @@
   - At batch 24, honest generation goodput is **200.9 tok/s** (derived via Method 1: $12,288 \text{ tokens} / 61.16\text{s}$, and Method 2: decode steady-state rate $24 / 0.09607\text{s} = 249.8 \text{ tok/s}$).
   - At batch 48, the scheduler thrashes, preempting 23 sequences and repeatedly recomputing their 3584 prompt tokens, causing throughput to collapse to 1298.5 tok/s.
 - **Remedy:** Set `max_num_seqs = 24`. Capping batch size eliminates all preemptions, executes two clean 24-request batches in $122.3\text{s}$ (saving 29s / 19.2% wall time), and cuts p95 latency.
+
+---
+
+## Log Entry 07: Part C Decision Memo Reasoning & Trade-Off Analysis
+- **Date/Time:** 2026-09-02 23:05 IST
+- **Objective:** Evaluate three architectural paths (SFT, Rewriter Model, Prompt Engineering) to casualize responses across 6 Indic languages (Hindi, Kannada, Tamil, Telugu, Bengali, Marathi) under severe resource constraints (1x A100 for 2 weeks, 1 reviewer for Hindi/Kannada only @ 10 h/week, 3-week launch, zero external API budget).
+
+### Trade-Off Breakdown & Rejection Rationale
+- **Path (b) Rewriter Model — Rejected Immediately**:
+  - Main serving hardware is 1x NVIDIA L4 (24GB).
+  - A 1B rewriter model requires ~2.5 GB VRAM (FP16 weights + overhead).
+  - From Part B, available KV cache is 12.08 GB. Adding the rewriter slashes KV cache to 9.58 GB, reducing 4096-token sequence concurrency from 25 to 20 (-20% capacity).
+  - Sequential two-model generation doubles TTFT and generation latency. Unacceptable in production.
+- **Path (a) Full SFT — High Risk of Catastrophic Forgetting & Blind Deployment**:
+  - Training FLM-4B with LoRA on 12k pairs on the A100 is fast (~1.33 hours per run).
+  - However, with no external API budget, synthetic data generation must rely on the un-casualized base model itself.
+  - Crucially: **4 out of 6 languages (Tamil, Telugu, Bengali, Marathi) have ZERO human reviewers**. Fine-tuning model weights without human validation risks deploying hallucinated slang or broken syntax to production.
+- **Path (c) Prompt Engineering — The Optimal Staged Choice**:
+  - Adds ~180 tokens to system prompt.
+  - Using vLLM prefix caching (`enable_prefix_caching=True`), the system prompt is computed once and shared. Incremental memory = 0 MB; prefill overhead < 5 ms.
+  - Allows human evaluation on Day 1 for Hindi and Kannada.
+  - If prompt engineering fails to hit the >= 60% win rate threshold by Day 4 (Kill Criterion), we still have 10 days of A100 time to execute a targeted LoRA SFT on validated Hindi/Kannada seeds.
