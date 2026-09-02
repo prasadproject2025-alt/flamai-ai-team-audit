@@ -96,3 +96,27 @@
   - Even on the intern's own tiny sample, the script itself disproves the 6× claim when pointed at an Indic-aware tokenizer!
 - **Experiment 5B:** Implemented true Unicode extended grapheme cluster counting (`regex \X`) in `benchmark_v1.py` to evaluate the fourth denominator suggested in A3 (per grapheme cluster / akshara).
 - **Result:** In Hindi, 100 sentences contain 88.7 grapheme clusters/sent (vs 134.9 codepoints/sent). Under XLM-R, Hindi is 0.45 tok/grapheme vs English 0.23 tok/grapheme (1.92×), showing that grapheme clusters (syllables vs letters) still reflect orthographic rather than semantic density. Tokens per parallel sentence remains the only robust economic cost driver.
+
+---
+
+## Log Entry 06: Part B Capacity Reconciliation & Goodput Derivations
+- **Date/Time:** 2026-09-02 23:00 IST
+- **Objective:** Reconcile `bench/model_spec.md` with `bench/bench_log.csv` and audit Section 2 of `REPORT_v0.md`.
+
+### B1 Arithmetic Verification
+- **Hypothesis:** We can predict the physical concurrency limit of the NVIDIA L4 GPU purely from the model architecture.
+- **Formula:** $\text{Bytes/tok} = 2 \times 28 \text{ layers} \times 8 \text{ KV heads} \times 128 \text{ dim} \times 2 \text{ bytes (fp16)} = 114,688 \text{ bytes} = 112.0 \text{ KiB}$.
+- **Sequence Memory:** $4096 \text{ tokens} \times 114,688 = 469,762,048 \text{ bytes} = 448.0 \text{ MiB}$.
+- **VRAM Budget:** $24 \text{ GB} \times 0.92 - 8.4 \text{ GB (weights)} - 1.6 \text{ GB (overhead)} = 12.08 \text{ GB}$ available for KV cache.
+- **Prediction:** $12.08 \times 10^9 / 469,762,048 = 25.72 \text{ concurrent sequences}$.
+- **Log Verification:** In `bench_log.csv`, batch 24 runs at `kv_cache_util = 0.93` with 0 preemptions ($24 / 0.93 = 25.81 \text{ capacity}$). At batch 32, exactly 7 sequences are preempted ($32 - 7 = 25$ running). At batch 48, exactly 23 are preempted ($48 - 23 = 25$ running). Hardware concurrency is mathematically capped at 25 sequences!
+
+### B2 & B3 The Throughput Anomaly & The "reported_tok_s" Fallacy
+- **Hypothesis:** `REPORT_v0.md` claim that "throughput improves with prompt length" and "batch 48 will deliver ~3200 tok/s" is mathematically impossible.
+- **Discovery:** `reported_tok_s` was computed as $(num\_requests \times (prompt\_len + gen\_len)) / wall\_clock\_s$. It lumped prefill prompt tokens into the rate!
+- **Evidence:**
+  - For long prompts (p=3584, g=512), 87.5% of the tokens are prompt tokens.
+  - At batch 16, honest generation goodput is **163.9 tok/s** for long prompts vs **294.5 tok/s** for short prompts. Long prompts actually generate tokens **44% slower**!
+  - At batch 24, honest generation goodput is **200.9 tok/s** (derived via Method 1: $12,288 \text{ tokens} / 61.16\text{s}$, and Method 2: decode steady-state rate $24 / 0.09607\text{s} = 249.8 \text{ tok/s}$).
+  - At batch 48, the scheduler thrashes, preempting 23 sequences and repeatedly recomputing their 3584 prompt tokens, causing throughput to collapse to 1298.5 tok/s.
+- **Remedy:** Set `max_num_seqs = 24`. Capping batch size eliminates all preemptions, executes two clean 24-request batches in $122.3\text{s}$ (saving 29s / 19.2% wall time), and cuts p95 latency.
