@@ -1,0 +1,78 @@
+{
+  "flaw1_whitespace_split": {
+    "description": "line.split(' ') counts double spaces as empty words, inflating word count and artificially deflating fertility.",
+    "eng_words_naive": 79,
+    "eng_words_clean": 78,
+    "hin_words_naive": 62,
+    "hin_words_clean": 61,
+    "eng_fertility_before_split_naive": 1.2652056277056274,
+    "eng_fertility_after_split_clean": 1.2830627705627704,
+    "hin_fertility_before_split_naive": 7.44845238095238,
+    "hin_fertility_after_split_clean": 7.598452380952381
+  },
+  "flaw2_lowercasing": {
+    "description": "line.lower() only affects English (Indic has no case), reducing English token count by 5.6% and inflating the Hindi/English disparity ratio.",
+    "eng_tokens_with_lower": 99,
+    "eng_tokens_raw_casing": 96,
+    "eng_fertility_with_lower": 1.2830627705627704,
+    "eng_fertility_raw_casing": 1.247186147186147,
+    "hin_tokens_with_lower": 459,
+    "hin_tokens_raw_casing": 459,
+    "hin_fertility_with_lower": 7.598452380952381,
+    "hin_fertility_raw_casing": 7.598452380952381,
+    "ratio_with_lower": 5.9221205347728905,
+    "ratio_raw_casing": 6.092476570635197
+  },
+  "flaw3_macro_vs_micro": {
+    "description": "fertility.py computes macro-average (average of ratios sum(T_i/W_i)/N) instead of micro-average (sum(T_i)/sum(W_i)).",
+    "eng_macro": 1.247186147186147,
+    "eng_micro": 1.2307692307692308,
+    "hin_macro": 7.598452380952381,
+    "hin_micro": 7.524590163934426
+  },
+  "flaw4_typology_words": {
+    "description": "Kannada words pack multiple morphemes per word (14.2 words/sentence vs 20.9 words/sentence in English). Measuring per-word penalizes agglutinative morphology.",
+    "eng": {
+      "tokens": 2796,
+      "words": 2221,
+      "chars": 13296,
+      "bytes": 13305,
+      "tok_per_word": 1.2588923908149483,
+      "tok_per_sent": 27.96,
+      "words_per_sent": 22.21
+    },
+    "hin": {
+      "tokens": 20443,
+      "words": 2640,
+      "chars": 13486,
+      "bytes": 34507,
+      "tok_per_word": 7.743560606060606,
+      "tok_per_sent": 204.43,
+      "words_per_sent": 26.4
+    },
+    "kan": {
+      "tokens": 36957,
+      "words": 1720,
+      "chars": 14100,
+      "bytes": 37841,
+      "tok_per_word": 21.486627906976743,
+      "tok_per_sent": 369.57,
+      "words_per_sent": 17.2
+    }
+  },
+  "flaw5_codepoint_vs_bytes": {
+    "description": "len(line) measures Unicode code points (UTF-16 code units), not visual graphemes or UTF-8 information bytes.",
+    "eng_bytes_per_char": 1.0006768953068592,
+    "hin_bytes_per_char": 2.5587275693311584,
+    "kan_bytes_per_char": 2.683758865248227,
+    "eng_tok_per_byte": 0.2101465614430665,
+    "hin_tok_per_byte": 0.5924305213434955,
+    "kan_tok_per_byte": 0.976639095161333
+  },
+  "harmless_nfc_normalization": {
+    "description": "NFC normalization looks suspicious to novices as mutating text, but is actually essential: NFD decomposed text fragments into stray combining code points, causing token bloat.",
+    "hin_nfc_tokens": 459,
+    "hin_nfd_tokens": 459,
+    "bloat_under_nfd_pct": 0.0
+  }
+}
