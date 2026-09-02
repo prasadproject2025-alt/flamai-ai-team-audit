@@ -13,8 +13,9 @@ This report presents an empirical audit of the tokenizer evaluation in `REPORT_v
 **Our audit proves this conclusion is fundamentally flawed.** 
 Through rigorous application of the Evidence Rule on a verified parallel corpus across 5 languages (English, Hindi, Kannada, Tamil, Telugu) and multiple tokenizers:
 1. **The script is not the bottleneck; the tokenizer vocabulary is.** While `gpt2` shows a 7.31× token inflation on Hindi due to 3-byte fallback tokenization, a multilingual tokenizer with Indic subwords (`xlm-roberta-base`) achieves a **1.28× parity for Hindi** and **1.35×–1.38× parity for Dravidian languages**.
-2. **`fertility.py` contains critical code and metric flaws.** Naive whitespace splitting creates ghost words on irregular spaces; lowercasing artificially inflates English advantage; macro-averaging distorts the aggregate; and measuring tokens per whitespace word severely penalizes agglutinative Dravidian morphology.
-3. **The true decision metric is Tokens per Parallel Sentence (Semantic Information Unit).** Using this metric, serving Indic languages incurs an overhead of only **28% to 38%**, completely invalidating the recommended 600% cost allocation.
+2. **The previous intern overlooked their own script's capability:** `fertility.py` already supported `--tokenizer hf:<repo_id>`. Running `python fertility.py --tokenizer hf:xlm-roberta-base` on the intern's *own original 10-line sample* immediately yields a ratio of **1.10×** (worse by only 10%, not 500%).
+3. **`fertility.py` contains critical code and metric flaws.** Naive whitespace splitting creates ghost words on irregular spaces; lowercasing artificially inflates English advantage; macro-averaging distorts the aggregate; and measuring tokens per whitespace word severely penalizes agglutinative Dravidian morphology.
+4. **The true decision metric is Tokens per Parallel Sentence (Semantic Information Unit).** Using this metric, serving Indic languages incurs an overhead of only **28% to 38%**, completely invalidating the recommended 600% cost allocation.
 
 ---
 
@@ -92,9 +93,9 @@ Raw Evidence: your-submission/partA/results/audit_evidence.json
 - **Mechanism**: In Python, `len(line)` returns the number of UTF-16 code units / Unicode scalar values, not visual graphemes (aksharas) or UTF-8 bytes. Indic scripts encode complex conjuncts by combining consonants, viramas, and dependent vowel signs (matras). A single visual syllable like *kṣi* (`क्षि`) is 4 Unicode code points (`क` + `्` + `ष` + `ि`).
 - **Evidence**:
   - English: 1.00 UTF-8 bytes per character.
-  - Hindi: **2.56 UTF-8 bytes per character**.
-  - Kannada: **2.68 UTF-8 bytes per character**.
-- **Verdict**: The `tok/char` metric is an artifact of Unicode codepoint representation rather than physical byte volume or semantic density.
+  - Hindi: **2.56 UTF-8 bytes per character**; 88.7 grapheme clusters per sentence vs 134.9 Unicode code points.
+  - Kannada: **2.68 UTF-8 bytes per character**; 92.2 grapheme clusters per sentence vs 141.0 Unicode code points.
+- **Verdict**: The `tok/char` metric is an artifact of Unicode codepoint representation rather than physical byte volume, visual grapheme count, or semantic density.
 
 ### 6. The Harmless Element: `unicodedata.normalize("NFC", line)`
 - **Location**: `fertility.py:49`: `line = unicodedata.normalize("NFC", line)`
@@ -110,26 +111,26 @@ We evaluated the 100-sentence parallel corpus across two distinct tokenizer arch
 1. **`gpt2` (tiktoken)**: 50,257 vocab, English-centric byte-level BPE.
 2. **`xlm-roberta-base` (transformers)**: 250,002 vocab, multilingual SentencePiece trained on 100+ languages including Indic.
 
-### Summary Results Table
+### Summary Results Table Across All 4 Denominators
 
 ```
 Runner: python your-submission/partA/scripts/benchmark_v1.py
 Results: your-submission/partA/results/corrected_metrics.csv
 ```
 
-| Tokenizer | Language | Words / Sent | Tok / Sent | **Ratio (Sent)** | Tok / Word | Ratio (Word) | Tok / Byte | Ratio (Byte) |
-|---|---|---|---|---|---|---|---|---|
-| **`gpt2`** | **eng** | 22.2 | 28.0 | **1.00×** | 1.26 | 1.00× | 0.210 | 1.00× |
-| `gpt2` | **hin** | 26.4 | 204.4 | **7.31×** | 7.74 | 6.15× | 0.592 | 2.82× |
-| `gpt2` | **kan** | 17.2 | 369.6 | **13.22×** | 21.49 | 17.07× | 0.977 | 4.65× |
-| `gpt2` | **tam** | 17.5 | 421.4 | **15.07×** | 24.07 | 19.12× | 0.993 | 4.73× |
-| `gpt2` | **tel** | 17.6 | 354.7 | **12.69×** | 20.13 | 15.99× | 0.986 | 4.69× |
-| | | | | | | | | |
-| **`xlm-roberta-base`** | **eng** | 22.2 | 31.2 | **1.00×** | 1.40 | 1.00× | 0.234 | 1.00× |
-| `xlm-roberta-base` | **hin** | 26.4 | 39.9 | **1.28×** | 1.51 | 1.08× | 0.116 | 0.49× |
-| `xlm-roberta-base` | **kan** | 17.2 | 43.1 | **1.38×** | 2.51 | 1.78× | 0.114 | 0.49× |
-| `xlm-roberta-base` | **tam** | 17.5 | 42.8 | **1.37×** | 2.44 | 1.74× | 0.101 | 0.43× |
-| `xlm-roberta-base` | **tel** | 17.6 | 42.3 | **1.35×** | 2.40 | 1.71× | 0.117 | 0.50× |
+| Tokenizer | Language | Words / Sent | Graph / Sent | Tok / Sent | **Ratio (Sent)** | Tok / Word | Ratio (Word) | Tok / Graph | Ratio (Graph) | Tok / Byte | Ratio (Byte) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| **`gpt2`** | **eng** | 22.2 | 133.0 | 28.0 | **1.00×** | 1.26 | 1.00× | 0.21 | 1.00× | 0.210 | 1.00× |
+| `gpt2` | **hin** | 26.4 | 88.7 | 204.4 | **7.31×** | 7.74 | 6.15× | 2.31 | 10.96× | 0.592 | 2.82× |
+| `gpt2` | **kan** | 17.2 | 92.2 | 369.6 | **13.22×** | 21.49 | 17.07× | 4.01 | 19.06× | 0.977 | 4.65× |
+| `gpt2` | **tam** | 17.5 | 100.9 | 421.4 | **15.07×** | 24.07 | 19.12× | 4.18 | 19.85× | 0.993 | 4.73× |
+| `gpt2` | **tel** | 17.6 | 79.3 | 354.7 | **12.69×** | 20.13 | 15.99× | 4.47 | 21.28× | 0.986 | 4.69× |
+| | | | | | | | | | | | |
+| **`xlm-roberta-base`** | **eng** | 22.2 | 133.0 | 31.2 | **1.00×** | 1.40 | 1.00× | 0.23 | 1.00× | 0.234 | 1.00× |
+| `xlm-roberta-base` | **hin** | 26.4 | 88.7 | 39.9 | **1.28×** | 1.51 | 1.08× | 0.45 | 1.92× | 0.116 | 0.49× |
+| `xlm-roberta-base` | **kan** | 17.2 | 92.2 | 43.1 | **1.38×** | 2.51 | 1.78× | 0.47 | 1.99× | 0.114 | 0.49× |
+| `xlm-roberta-base` | **tam** | 17.5 | 100.9 | 42.8 | **1.37×** | 2.44 | 1.74× | 0.42 | 1.81× | 0.101 | 0.43× |
+| `xlm-roberta-base` | **tel** | 17.6 | 79.3 | 42.3 | **1.35×** | 2.40 | 1.71× | 0.53 | 2.27× | 0.117 | 0.50× |
 
 ---
 
@@ -142,8 +143,9 @@ In LLM serving infrastructure, costs (GPU compute time, KV-cache memory allocati
 When a user submits a prompt, their goal is to communicate a specific semantic unit of information (e.g. asking a question, requesting a summary, or providing an instruction). The serving cost to satisfy that request depends on **how many tokens the model requires to represent that exact same semantic information**.
 
 1. **Why Tokens/Word Fails**: Words do not hold semantic content constant across languages. A language with agglutinative morphology (Kannada/Tamil) expresses in 1 word what English expresses in 3 words. Dividing by words introduces typological noise that has nothing to do with infrastructure cost.
-2. **Why Tokens/Byte Fails**: Bytes measure storage encoding efficiency (e.g. UTF-8 multi-byte sequences), not user intent.
-3. **Why Tokens/Parallel Sentence Succeeds**: Parallel sentences hold semantic information constant. On `xlm-roberta-base`, expressing a standard sentence takes **31.2 tokens in English** and **39.9 tokens in Hindi**. 
+2. **Why Tokens/Grapheme Cluster Fails**: Grapheme clusters measure visual orthography. Devanagari and Dravidian scripts are syllabic alphabets (abugidas) where one akshara encodes a full syllable, whereas English Latin script is alphabetic (single phonemes). Ratios based on graphemes compare apples to oranges.
+3. **Why Tokens/Byte Fails**: Bytes measure storage encoding efficiency (e.g. UTF-8 multi-byte sequences), not user intent.
+4. **Why Tokens/Parallel Sentence Succeeds**: Parallel sentences hold semantic information constant. On `xlm-roberta-base`, expressing a standard sentence takes **31.2 tokens in English** and **39.9 tokens in Hindi**. 
 
 $$\text{True Cost Multiplier} = \frac{\text{Tokens}_{\text{Indic}}}{\text{Tokens}_{\text{English}}} = \frac{39.9}{31.2} = \mathbf{1.28\times}$$
 

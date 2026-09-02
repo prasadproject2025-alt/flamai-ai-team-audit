@@ -83,3 +83,16 @@
   - Tamil: 42.8 tok/sentence (**1.37×**)
   - Telugu: 42.3 tok/sentence (**1.35×**)
 - **Conclusion:** The previous intern's claim that "the script is the root cause and Hindi is 6× more expensive" is completely false. With an appropriate multilingual tokenizer, the true serving overhead for Indic languages is only **28% to 38%**.
+
+---
+
+## Log Entry 05: Denominator Completeness & Testing the Intern's Own Script
+- **Date/Time:** 2026-09-02 22:50 IST
+- **Experiment 5A:** Re-tested the previous intern's original `fertility.py` on their original 10-line sample with the flag `--tokenizer hf:xlm-roberta-base` (a flag already supported in their code!).
+- **Result:**
+  - `eng`: 1.28 tok/word
+  - `hin`: 1.42 tok/word
+  - Output: `hin is 1.10x the fertility of eng (worse tokenization)`
+  - Even on the intern's own tiny sample, the script itself disproves the 6× claim when pointed at an Indic-aware tokenizer!
+- **Experiment 5B:** Implemented true Unicode extended grapheme cluster counting (`regex \X`) in `benchmark_v1.py` to evaluate the fourth denominator suggested in A3 (per grapheme cluster / akshara).
+- **Result:** In Hindi, 100 sentences contain 88.7 grapheme clusters/sent (vs 134.9 codepoints/sent). Under XLM-R, Hindi is 0.45 tok/grapheme vs English 0.23 tok/grapheme (1.92×), showing that grapheme clusters (syllables vs letters) still reflect orthographic rather than semantic density. Tokens per parallel sentence remains the only robust economic cost driver.
