@@ -125,14 +125,33 @@ def evaluate_tokenizer(name, encode_fn, corpus):
     return results
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser(description="Multilingual Tokenizer Benchmark (v1)")
+    ap.add_argument(
+        "--corpus",
+        action="append",
+        metavar="LANG=PATH",
+        help="Optional custom language and corpus path, e.g. eng=path.txt (repeatable). Defaults to FLORES-200.",
+    )
+    ap.add_argument(
+        "--tokenizer",
+        action="append",
+        choices=["gpt2", "xlm-roberta-base", "all"],
+        default=None,
+        help="Tokenizer(s) to benchmark (default: all).",
+    )
+    ap.add_argument(
+        "--text",
+        type=str,
+        default=None,
+        help="Single interactive text string to test across tokenizers.",
+    )
+    args = ap.parse_args()
+
     script_dir = os.path.dirname(os.path.abspath(__file__))
     corpus_dir = os.path.normpath(os.path.join(script_dir, "..", "corpus"))
     results_dir = os.path.normpath(os.path.join(script_dir, "..", "results"))
     os.makedirs(results_dir, exist_ok=True)
-    
-    languages = ["eng", "hin", "kan", "tam", "tel"]
-    corpus = load_corpus(corpus_dir, languages)
-    print(f"Loaded parallel corpus for {languages} with {len(corpus['eng'])} sentences each.\n")
     
     # Setup Tokenizers
     enc_gpt2 = tiktoken.get_encoding("gpt2")
@@ -141,10 +160,39 @@ def main():
     tok_xlmr = AutoTokenizer.from_pretrained("xlm-roberta-base")
     xlmr_fn = lambda s: tok_xlmr.encode(s, add_special_tokens=False)
     
-    tokenizers = {
+    all_toks = {
         "gpt2": gpt2_fn,
         "xlm-roberta-base": xlmr_fn,
     }
+    
+    if args.tokenizer and "all" not in args.tokenizer:
+        tokenizers = {k: all_toks[k] for k in args.tokenizer if k in all_toks}
+    else:
+        tokenizers = all_toks
+
+    # Quick interactive mode for live defense testing
+    if args.text:
+        print(f"\nEvaluating raw text: {args.text}")
+        print(f"Words: {len(args.text.split())} | Graphemes: {count_graphemes(args.text)} | Bytes: {len(args.text.encode('utf-8'))}")
+        for tname, tfn in tokenizers.items():
+            toks = tfn(args.text)
+            print(f"[{tname}] Tokens ({len(toks)}): {toks}")
+        return
+
+    # Corpus mode
+    if args.corpus:
+        corpus = {}
+        languages = []
+        for cspec in args.corpus:
+            lang, cpath = cspec.split("=", 1)
+            languages.append(lang)
+            with open(cpath, "r", encoding="utf-8") as f:
+                corpus[lang] = [unicodedata.normalize("NFC", l.strip()) for l in f if l.strip()]
+    else:
+        languages = ["eng", "hin", "kan", "tam", "tel"]
+        corpus = load_corpus(corpus_dir, languages)
+        
+    print(f"Loaded corpus for {languages} with {len(corpus[languages[0]])} sentences each.\n")
     
     all_benchmarks = {}
     csv_rows = []
@@ -181,20 +229,20 @@ def main():
             })
         print()
 
-    # Save to JSON
-    json_path = os.path.join(results_dir, "benchmark_results.json")
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(all_benchmarks, f, indent=2)
-    print(f"Detailed JSON results saved to: {json_path}")
-    
-    # Save to CSV
-    csv_path = os.path.join(results_dir, "corrected_metrics.csv")
-    fieldnames = list(csv_rows[0].keys())
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(csv_rows)
-    print(f"Summary CSV metrics saved to: {csv_path}")
+    # Save to JSON only if default run
+    if not args.corpus:
+        json_path = os.path.join(results_dir, "benchmark_results.json")
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(all_benchmarks, f, indent=2)
+        print(f"Detailed JSON results saved to: {json_path}")
+        
+        csv_path = os.path.join(results_dir, "corrected_metrics.csv")
+        fieldnames = list(csv_rows[0].keys())
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(csv_rows)
+        print(f"Summary CSV metrics saved to: {csv_path}")
 
 if __name__ == "__main__":
     main()
