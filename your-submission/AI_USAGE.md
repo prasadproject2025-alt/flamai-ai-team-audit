@@ -1,7 +1,7 @@
 # AI Usage Disclosure (`AI_USAGE.md`)
 
-**Candidate / Intern:** AI Engineering Intern  
-**Assignment:** The Audit (Part A Tokenizer Evaluation)  
+**Candidate:** Prasad  
+**Assignment:** The Audit  
 
 ---
 
@@ -30,3 +30,50 @@
    - Standard LLM assistants often take columns like `reported_tok_s` at face value as generation throughput and attempt to fit scaling curves. We audited the harness arithmetic and verified that `reported_tok_s` includes prefill prompt tokens, which are 87.5% of long-context tokens. Recognizing this allowed us to expose the intern's false conclusion that long prompts increase GPU efficiency.
 5. **Reflexive Bias Toward Fine-Tuning (Part C)**:
    - Unconstrained AI prompts frequently jump to "train an SFT model" whenever an A100 GPU is mentioned. We caught that doing an unvalidated SFT pass across Tamil, Telugu, Bengali, and Marathi without a single native speaker to verify outputs poses severe production risk. Grounding the decision in human reviewer throughput and serving VRAM constraints led to our staged recommendation.
+
+---
+
+### Where AI Misled Me And I Did Not Catch It Until A Late Self-Audit
+
+These three are the entries I would most want a reviewer to read, because they are the ones
+that survived into a "finished" draft. All are documented in full in `NOTEBOOK.md` Log Entry 09.
+
+6. **A null result written up as a positive one (most serious).**
+   AI-assisted drafting produced a confident mechanism narrative for the NFC finding —
+   "NFD text fragments into stray byte-fallback tokens, inflating counts" — while the
+   experiment backing it had measured **0.00%** and that zero was sitting in my own
+   committed `results/audit_evidence.json`. Neither the model nor I noticed the
+   contradiction, because the prose was plausible and I had already decided what the
+   answer was. The root cause turned out to be interesting (no decomposable Devanagari
+   code points occur in this corpus, so `NFD(text)==text`), but I only found it by
+   re-running the experiment instead of re-reading the sentence. **Lesson: a generated
+   explanation is not evidence, and a plausible mechanism paired with a null measurement
+   is worse than no claim at all.**
+
+7. **A distortion described in the wrong direction.**
+   The lowercasing finding was written as "lowers English token counts, exaggerating the
+   disparity." The measurements say the opposite: English tokens go 96 → 99 and the ratio
+   falls from 6.09× to 5.92×. The write-up also contained a "5.6%" figure that appears
+   nowhere in any output. Fixed by making every description in `audit_evidence.py` a
+   computed f-string, so the prose is now generated from the data rather than written
+   alongside it.
+
+8. **A headline that depended on an unrepresentative choice.**
+   Both the model and I settled on `xlm-roberta-base` as "the Indic-aware tokenizer" and
+   built the 1.28×/1.35× headline on it, without asking whether it resembles anything we
+   would actually serve. It does not — it is encoder-only, and `bench/model_spec.md`
+   specifies a 128k-vocab generative model. Testing `Qwen2.5-1.5B` gave 4.30×–6.79×.
+   The conclusion changed as a result. **Lesson: AI is good at optimising the answer to
+   the question asked, and will not volunteer that the question was framed too narrowly.**
+
+### What I Understand Versus What Was Generated
+
+- **I can re-derive unaided:** all Part B arithmetic (KV bytes/token, the 25-sequence
+  ceiling and its three log confirmations, both goodput derivations), the denominator
+  argument in A3, and the shared-numerator refutation.
+- **AI wrote most of the plumbing:** the tar-streaming download script, argparse wiring,
+  CSV/JSON serialisation, and markdown table formatting.
+- **AI got wrong and I had to correct:** the three items above, the "UTF-16 code units"
+  terminology (Python 3 `len()` returns code points), and an over-strong claim that
+  "Devanagari has no canonical decompositions" (it has 11; they simply do not occur in
+  this corpus).

@@ -1,7 +1,7 @@
 # Part B: Capacity Reconciliation Report
 
-**Author:** AI Team Intern  
-**Date:** September 2, 2026  
+**Author:** Prasad  
+**Date:** September 3, 2026  
 **Subject:** Hardware Arithmetic, Throughput Anomaly Root-Cause Analysis, and Goodput Reconciliation  
 
 ---
@@ -52,7 +52,9 @@ From `bench/model_spec.md`:
 
 Calculating maximum concurrent 4096-token sequences:
 $$\text{Max Concurrent Sequences} = \frac{12.08 \times 10^9\text{ bytes}}{469,762,048\text{ bytes}} = \mathbf{25.72\text{ sequences}}$$
-*(Or using binary units: $\frac{12.08 \times 1024^3\text{ bytes}}{448 \times 1024^2\text{ bytes}} = \mathbf{27.61\text{ sequences}}$).*
+**Unit assumption, stated explicitly.** The arithmetic above treats the "24 GB" in `model_spec.md` as **decimal** ($24 \times 10^9$ bytes), consistent with the fact that the weights figure ($4.2\text{B} \times 2\text{ bytes} = 8.4\text{ GB}$) is also decimal. Reading it as binary ($24\text{ GiB}$) would predict roughly **27.6** concurrent sequences instead.
+
+**The log rules the binary reading out.** Three independent observations put the ceiling at 25, not 27.6: batch 24 runs with `preempted_seqs = 0` at `kv_cache_util = 0.93`; batch 32 preempts exactly 7 ($32 - 7 = 25$); batch 48 preempts exactly 23 ($48 - 23 = 25$). A 27.6-sequence ceiling would have allowed batch 32 to run with at most 5 preemptions. The decimal reading is therefore the correct one, and we adopt it.
 
 ---
 
@@ -148,10 +150,11 @@ During the autoregressive decode phase, the GPU processes all 24 sequences concu
 1. **Steady-State Decode Throughput (Generation Phase Only)**:
    $$\text{Decode Throughput} = \frac{\text{batch\_size}}{\text{ITL (seconds)}} = \frac{24}{0.09607\text{ s}} = \mathbf{249.82\text{ gen tok/s}}$$
 2. **Reconciling Prefill and Decode to Compute Full Lifecycle Goodput**:
-   - Duration of decode phase: $512\text{ steps} \times 0.09607\text{ s} = 49.19\text{ seconds}$.
-   - Duration of prefill phase: $61.16\text{s} - 49.19\text{s} = 11.97\text{ seconds}$.
+   - Duration of decode phase: the first of the 512 generated tokens is emitted by prefill, so there are **511** inter-token intervals: $511 \times 0.09607\text{ s} = 49.09\text{ seconds}$.
+   - Duration of prefill phase: $61.16\text{s} - 49.09\text{s} = \mathbf{12.07\text{ seconds}}$.
+   - *Sanity check on that prefill figure:* $24 \times 3584 = 86{,}016$ prompt tokens at $\approx 2 \times 4.2\text{B}$ FLOPs/token $\approx 7.2 \times 10^{14}$ FLOPs. Against the L4's ~121 TFLOPS peak at realistic MFU, ~12 s is the right order of magnitude — the decomposition is physically consistent, not just arithmetically consistent.
    - End-to-end goodput across the entire request lifecycle:
-     $$\text{Goodput}_{\text{E2E}} = \frac{24 \times 512}{11.97\text{s (prefill)} + 49.19\text{s (decode)}} = \frac{12,288}{61.16\text{s}} = \mathbf{200.92\text{ gen tok/s}}$$
+     $$\text{Goodput}_{\text{E2E}} = \frac{24 \times 512}{12.07\text{s (prefill)} + 49.09\text{s (decode)}} = \frac{12,288}{61.16\text{s}} = \mathbf{200.92\text{ gen tok/s}}$$
 
 ---
 

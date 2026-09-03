@@ -1,6 +1,6 @@
 # Chronological Lab Notebook: The Audit
 
-**Author:** AI Engineering Intern  
+**Author:** Prasad  
 **Project:** Flam AI Intern Assignment — The Audit  
 **Status:** Chronological working log (Hypothesis → Experiment → Result → Revision)
 
@@ -84,6 +84,8 @@
   - Telugu: 42.3 tok/sentence (**1.35×**)
 - **Conclusion:** The previous intern's claim that "the script is the root cause and Hindi is 6× more expensive" is completely false. With an appropriate multilingual tokenizer, the true serving overhead for Indic languages is only **28% to 38%**.
 
+> ⚠️ **SUPERSEDED — see Log Entry 09C.** The second half of this conclusion is wrong, and I left it here rather than editing it because the notebook is a chronological record. The 28–38% figure is specific to `xlm-roberta-base`, an encoder-only model we would never serve. Measured on `Qwen2.5-1.5B` (151k vocab, generative — the class of model `bench/model_spec.md` actually describes), the same corpus gives **4.30×–6.79×**. The first half of the conclusion stands and is in fact strengthened: the penalty *is* a tokenizer property, not a script property. What changed is that there is no single corrected number — only a number per tokenizer.
+
 ---
 
 ## Log Entry 05: Denominator Completeness & Testing the Intern's Own Script
@@ -158,8 +160,44 @@
    - Added `--flaw` selector (`whitespace`, `lowercase`, `macro-micro`, `typology`, `char-denominator`, `shared-numerator`, `nfc`, `seed`).
    - Every finding in `AUDIT_REPORT.md` now has an exact standalone execution command.
 3. **Flaw 5 Distortion Magnitude Quantified**:
-   - Measured `ratio_char` (7.21x) vs `ratio_byte` (2.82x). Dividing by Python UTF-16 codepoints overstated disparity by **2.56x (256%)**.
+   - Measured `ratio_char` (7.21x) vs `ratio_byte` (2.82x). Dividing by Unicode code points overstated the disparity by **2.56x**.
 4. **B3 Goodput Independence Categorization**:
    - Method 1 (wall clock) and Method 2 (decode ITL) explicitly labeled as independent. Clarified that `reported_tok_s * 512/4096` is an algebraic restatement of Method 1.
 5. **Production Monitoring Distinction**:
    - Explicitly decoupled input encoding fertility from output generation verbosity in `partA/memo.md`.
+
+---
+
+## Log Entry 09: Self-Audit — Three Claims That Did Not Survive Re-Measurement
+- **Date/Time:** 2026-09-03 17:40 IST
+- **Objective:** Re-derive every number in the submission from scratch before the defense, on the assumption that anything I could not reproduce cold was something I did not actually know.
+- **Outcome:** Three claims failed. Two were wrong; one was fragile. This entry is the record of all three.
+
+### 9A. DEAD END — my NFC "evidence" proved nothing (and I had written it up as if it did)
+- **Original hypothesis:** dropping NFC normalisation causes decomposed characters to fragment into byte-fallback tokens, inflating counts.
+- **Original experiment:** compared NFC vs NFD token counts on `hin_sample.txt`.
+- **Result:** 459 vs 459 tokens. **0.00% delta.** `bloat_under_nfd_pct: 0.0` was sitting in my own `results/audit_evidence.json` while `AUDIT_REPORT.md` asserted "severe byte-fallback token bloat."
+- **Why I missed it:** I had already decided NFC was the "harmless but necessary" element, so I read a null result as confirmation instead of as a failed test. This is the exact failure mode the assignment warns about, in my own repo.
+- **Root cause, once I actually investigated:** Unicode defines 11 decomposable Devanagari code points (the nukta forms `ऩ ऱ ऴ क़ ख़ ग़ ज़ ड़ ढ़ फ़ य़`). **None occur in the FLORES Hindi corpus.** `unicodedata.normalize('NFD', text) == text` returns `True`. The test was structurally incapable of producing a non-zero result — I had tested a raincoat indoors.
+- **Revision:** re-ran across all four Indic corpora. Kannada **+4.52%**, Tamil **+1.47%**, Telugu **+0.65%**, Hindi 0.00%. The mechanism is real; my test language was wrong. `run_flaw_nfc()` now reports per-language deltas, the count of decomposable characters actually present, and the `NFD(text)==text` boolean, so the null result can never again be mistaken for a positive one.
+- **Note:** I nearly stated "Devanagari has no canonical decompositions" as the explanation. That is also false — the 11 code points exist, they just don't appear here. The script now measures this rather than asserting it.
+
+### 9B. WRONG DIRECTION — lowercasing biases the opposite way from what I claimed
+- **Original claim:** `.lower()` "artificially lowers English token counts, exaggerating the perceived disparity."
+- **My own measured numbers:** English tokens **96 → 99** *with* lowercasing (+3.1%); disparity ratio **6.09× → 5.92×**.
+- **Result:** lowercasing *raises* English tokens and *shrinks* the gap. I had written the arrow backwards, and quoted a "5.6%" figure that appears nowhere in my data.
+- **Revision:** the flaw is real (the transform is applied to only one side of a two-sided comparison) but its bias runs **against** `REPORT_v0`'s conclusion — correcting it makes v0's headline marginally *worse*, not better. All descriptions in `audit_evidence.py` are now computed f-strings derived from the measured values, so prose cannot drift from data again.
+
+### 9C. FRAGILE — my headline number depended on a tokenizer we would never serve
+- **Trigger:** asked myself the counterfactual a grader would ask — *"what if we used the tokenizer in `model_spec.md` instead?"*
+- **Problem:** my 1.28×/1.35× headline came from `xlm-roberta-base` — a 250k-vocab **encoder-only** model that is never used for generative serving. Meanwhile `partA/memo.md` recommended deploying Gemma/Llama/Qwen (128k–256k) *and* budgeting 1.35×. Those two statements were incompatible and I had not noticed.
+- **Experiment:** added `Qwen/Qwen2.5-1.5B` (151k vocab, generative, ungated — the closest public proxy to the 128k-vocab FLM-4B in `bench/model_spec.md`) as a third tokenizer in `benchmark_v1.py`, same corpus, same micro-averaging.
+- **Result:** Hindi **4.30×**, Kannada **6.70×**, Tamil **5.91×**, Telugu **6.79×** — nowhere near 1.28×.
+- **Revision (this changed my conclusion, not just my wording):** the multiplier is a property of **the deployed vocabulary**, not of the language — same text, same denominator, 1.28× to 6.79× depending only on which tokenizer is loaded. This refutes `REPORT_v0`'s "property of the script, not the tokenizer" *more* strongly than my original framing did, and it survives the counterfactual. The memo's flat "budget 1.35×" is withdrawn and replaced with ≈4–7× for a 128k-class vocabulary, plus an instruction to re-measure on the production tokenizer before committing spend.
+
+### 9D. Two smaller corrections
+- **Terminology:** I had written that Python's `len()` returns "UTF-16 code units." It returns Unicode **code points** (PEP 393). The substance (code points ≠ graphemes ≠ bytes) was right; the term was wrong. Corrected everywhere.
+- **Crash:** adding Devanagari characters to console output made `audit_evidence.py` die with `UnicodeEncodeError` on Windows cp1252 — the same bug I hit in Log Entry 01 and fixed in `benchmark_v1.py` but never back-ported. `sys.stdout.reconfigure(encoding="utf-8")` added. Worth catching now rather than live on a shared screen.
+
+### Reflection
+All three failures share one shape: I ran an experiment, got a result, and recorded what I expected instead of what I measured. The null NFD result was the most dangerous, because a 0.00% sitting next to a confident claim reads as fabrication rather than sloppiness. The safeguard now in place is structural rather than a matter of care — every description string is computed from the measured value, so the prose cannot disagree with the data.

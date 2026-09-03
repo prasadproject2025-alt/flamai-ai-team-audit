@@ -1,53 +1,55 @@
 # Executive Memo: Tokenizer Economics & Routing Strategy
 
 **TO:** Leadership Team  
-**FROM:** AI Team Intern  
-**DATE:** September 2, 2026  
+**FROM:** Prasad — AI Team Intern  
+**DATE:** September 3, 2026  
 **SUBJECT:** Corrected Multilingual Tokenizer Economics and Production Routing Recommendation  
 
 ---
 
 ### 1. Corrected Headline Numbers
 
-The preliminary findings in `REPORT_v0.md` claiming that Hindi is **5.89×–7.0× more expensive** than English were generated using an English-centric tokenizer (`gpt2`, 50k vocab) on an unrepresentative 10-sentence sample. In that configuration, Indic scripts decompose into 3-byte fallback sequences, causing severe artificial token inflation.
+`REPORT_v0.md` reports Hindi at **5.89×–7.0×** English and attributes it to *"a property of the script, not the tokenizer."* **That attribution is the error**, and it is why the recommendation is wrong.
 
-When evaluated on an aligned multilingual parallel corpus (FLORES-200) using an Indic-aware tokenizer (`xlm-roberta-base`, 250k vocab) holding semantic content constant across sentences:
+Holding the corpus, the denominator, and the text byte-identical and changing **only the tokenizer** — 100 parallel FLORES-200 sentences, tokens per parallel sentence:
 
-- **Hindi (`hin`)**: **1.28×** tokens vs. English (39.9 vs. 31.2 tok/sentence) — **+28% cost overhead** (not +500%).
-- **Kannada (`kan`)**: **1.38×** tokens vs. English (43.1 vs. 31.2 tok/sentence) — **+38% cost overhead** (not +1200%).
-- **Tamil (`tam`)**: **1.37×** tokens vs. English (42.8 vs. 31.2 tok/sentence) — **+37% cost overhead** (not +1400%).
-- **Telugu (`tel`)**: **1.35×** tokens vs. English (42.3 vs. 31.2 tok/sentence) — **+35% cost overhead** (not +1100%).
+| Language | `gpt2` (50k) | `Qwen2.5-1.5B` (151k) | `xlm-roberta-base` (250k) |
+|---|---|---|---|
+| Hindi | 7.31× | **4.30×** | 1.28× |
+| Kannada | 13.22× | **6.70×** | 1.38× |
+| Tamil | 15.07× | **5.91×** | 1.37× |
+| Telugu | 12.69× | **6.79×** | 1.35× |
+
+**The multiplier is a property of the vocabulary we deploy, not of the language.** There is no single "Hindi number" — only a number per tokenizer. `bench/model_spec.md` specifies FLM-4B with a **128k vocab**, so the middle column is the planning-relevant one: **≈4×–7×**. Both the report's 6× and the tempting 1.28× headline would mislead.
 
 ---
 
 ### 2. Strategic Routing Recommendation
 
-**Do NOT build or route to a separate Indic-specialized serving stack.**
+**Do not build a separate Indic serving stack. Change the vocabulary instead.**
 
-1. **Avoid Architectural Bifurcation**: Partitioning traffic into a separate Indic model introduces dual cold starts, fragmented GPU memory pools, double CI/CD pipelines, and catastrophic routing failure on mixed-language or code-switched queries.
-2. **Standardize on Modern Wide-Vocab Models**: The serving overhead for Indic languages on a unified model with an Indic-aware vocabulary is only **28%–38%**, well within typical serving elasticity. We recommend serving all traffic through a unified multilingual model (such as modern Gemma, Llama 3, or Qwen models with 128k–256k vocabs) and budgeting a modest **1.35× blended capacity buffer** for Indic user traffic rather than a 6× multiplier.
+1. **Bifurcation solves the wrong problem.** Separate Indic routing adds dual cold starts, fragmented GPU memory pools, duplicated CI/CD, and fails on code-switched queries — while leaving token cost per Indic request *completely unchanged*.
+2. **Vocabulary selection is the actual lever.** Moving Indic traffic from a general-purpose 151k vocabulary to an Indic-aware one is worth up to a **~5× reduction** in tokens per request (Kannada 6.70× → 1.38×). No routing topology approaches that. This is a model-procurement decision, not an infrastructure one.
+3. **Interim capacity planning.** Until our production tokenizer is measured directly, budget **≈5× blended** for Indic traffic on the current 128k-class vocabulary — then re-measure before committing spend:
+
+```powershell
+python your-submission/partA/scripts/benchmark_v1.py --tokenizer <production-tokenizer>
+```
 
 ---
 
 ### 3. The Biggest Caveat: Domain & Script Distribution
 
-Our evaluation used the **FLORES-200** parallel corpus, which consists of formal, professionally translated encyclopedic text written in native Brahmic scripts. 
+Our corpus is formal written text in native scripts; production traffic is neither.
 
-**Real-world Indian conversational traffic differs significantly:**
-- **Code-Switching and Transliteration**: Over 60% of consumer chat in India uses Latin-script transliterations (Hinglish, Tanglish, Kanglish) or blends Hindi and English words in the same sentence. 
-- Latin-transliterated Indic text tokenizes very differently from native scripts. While native scripts benefit from wide-vocab subwords, unusual transliterated spellings can fragment into individual Latin letters. 
-- Budgeting and capacity planning must not assume all Indic traffic arrives in pure native Devanagari or Dravidian scripts.
+- **Code-switching and transliteration**: a large share of Indian consumer chat arrives as Latin-script transliteration (Hinglish, Tanglish, Kanglish) or mixes English and Indic words in one sentence. Transliterated Indic text tokenizes on a completely different path from native script and can fragment into individual Latin letters. **None of the numbers above predict that behaviour.**
+- **Sampling**: these are the **first 100** of FLORES-200 dev's 997 sentences. FLORES dev is grouped by source article, so the sample is topically clustered rather than random. Effects this large are unlikely to be sampling artifacts, but the corpus cannot support tight confidence intervals.
 
 ---
 
 ### 4. Production Monitoring Metric
 
-To validate these findings under real user traffic and catch regressions early, we will monitor:
+$$\mathbf{P50\ Total\ Tokens\ per\ Completed\ Turn\ (Prompt + Completion),\ Segmented\ by\ Detected\ Language}$$
 
-$$\mathbf{P50 \text{ and } P95 \text{ Total Tokens per Completed Turn (Prompt + Completion), Segmented by Detected Language}}$$
-
-- **Distinction Between Input Fertility vs. Output Verbosity**: Our benchmark measured *input encoding fertility* (tokens needed to encode equivalent parallel prompts). In production, however, serving cost is determined by *total turn tokens (prompt encoding + output generation)*. 
-- **Two Distinct Failure Modes Watched on the Same Metric**:
-  1. *Prompt Tokenization Degradation*: A spike in prompt tokens signals a shift toward high-fragmentation Latin-script transliterations (Hinglish/Tanglish).
-  2. *Output Verbosity Drift*: A spike in generated tokens signals model verbosity drift (generating overly verbose conversational filler in Indic responses).
-- **Trigger Threshold**: If the ratio $\frac{\text{Total Tokens}_{P50}(\text{Indic})}{\text{Total Tokens}_{P50}(\text{English})}$ exceeds **1.50×** in production over a rolling 7-day window, it triggers an automated alert for vocabulary re-tuning or prompt-compression passes.
+- **Input fertility vs. output verbosity**: this analysis measured *input encoding fertility*. Serving cost is driven by *total* turn tokens, so the monitor deliberately spans both — a prompt-token spike signals a shift toward high-fragmentation transliteration; a generated-token spike signals model verbosity drift.
+- **Trigger threshold**: alert when the ratio $\frac{\text{Total Tokens}_{P50}(\text{Indic})}{\text{Total Tokens}_{P50}(\text{English})}$ drifts **more than ±25% from the baseline measured on our own production tokenizer** over a rolling 7-day window. The threshold is deliberately *relative*: an absolute trigger is meaningless when the baseline itself ranges from 1.3× to 6.8× depending on the deployed vocabulary.

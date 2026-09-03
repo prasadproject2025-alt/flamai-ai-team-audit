@@ -136,7 +136,7 @@ def main():
     ap.add_argument(
         "--tokenizer",
         action="append",
-        choices=["gpt2", "xlm-roberta-base", "all"],
+        choices=["gpt2", "xlm-roberta-base", "Qwen2.5-1.5B", "all"],
         default=None,
         help="Tokenizer(s) to benchmark (default: all).",
     )
@@ -153,17 +153,29 @@ def main():
     results_dir = os.path.normpath(os.path.join(script_dir, "..", "results"))
     os.makedirs(results_dir, exist_ok=True)
     
-    # Setup Tokenizers
+    # Setup Tokenizers.
+    #
+    # Three deliberately different vocabularies:
+    #   gpt2              50k   English-centric BPE      -- what REPORT_v0 used
+    #   xlm-roberta-base  250k  Indic-aware SentencePiece -- best case, but encoder-only
+    #   Qwen2.5-1.5B      151k  generative, ungated       -- closest available proxy for
+    #                                                        the 128k-vocab FLM-4B in
+    #                                                        bench/model_spec.md
+    # The spread between the last two is the point: the cost multiplier is a property of
+    # the deployed vocabulary, not of the language.
     enc_gpt2 = tiktoken.get_encoding("gpt2")
     gpt2_fn = lambda s: enc_gpt2.encode(s)
-    
-    tok_xlmr = AutoTokenizer.from_pretrained("xlm-roberta-base")
-    xlmr_fn = lambda s: tok_xlmr.encode(s, add_special_tokens=False)
-    
-    all_toks = {
-        "gpt2": gpt2_fn,
-        "xlm-roberta-base": xlmr_fn,
-    }
+
+    all_toks = {"gpt2": gpt2_fn}
+
+    for label, repo in (("xlm-roberta-base", "xlm-roberta-base"),
+                        ("Qwen2.5-1.5B", "Qwen/Qwen2.5-1.5B")):
+        try:
+            tok = AutoTokenizer.from_pretrained(repo)
+            all_toks[label] = (lambda t: (lambda s: t.encode(s, add_special_tokens=False)))(tok)
+        except Exception as exc:                                    # noqa: BLE001
+            print(f"[warn] tokenizer '{repo}' unavailable ({type(exc).__name__}); skipping. "
+                  f"Results will omit it.", file=sys.stderr)
     
     if args.tokenizer and "all" not in args.tokenizer:
         tokenizers = {k: all_toks[k] for k in args.tokenizer if k in all_toks}

@@ -1,59 +1,83 @@
 # AI Team Intern Assignment — The Audit
 
-**Author:** AI Engineering Intern  
-**Repository:** [flamai-ai-team-audit](https://github.com/prasadproject2025-alt/flamai-ai-team-audit)  
-**Submission Status:** All parts (A, B, C) complete, empirically verified under the Evidence Rule, and defense-ready.
+**Author:** Prasad  
+**Repository:** [flamai-ai-team-audit](https://github.com/prasadproject2025-alt/flamai-ai-team-audit)
+
+Every number in this submission is produced by a script in `partA/scripts/` or
+`partB/scripts/` and can be re-derived from a clean checkout. Claims that did not survive
+re-measurement are recorded as revisions in `NOTEBOOK.md` Log Entry 09 rather than quietly
+removed.
 
 ---
 
-## Repository Index & Deliverables
+## Headline Finding
+
+`REPORT_v0.md` concludes Hindi costs ~6× English and attributes it to *"a property of the
+script, not the tokenizer."* Holding the corpus, the denominator, and the text
+byte-identical and changing **only the tokenizer**:
+
+| Language | `gpt2` (50k) | `Qwen2.5-1.5B` (151k) | `xlm-roberta-base` (250k) |
+|---|---|---|---|
+| Hindi | 7.31× | 4.30× | 1.28× |
+| Kannada | 13.22× | 6.70× | 1.38× |
+
+The cost multiplier is a property of **the deployed vocabulary**, not of the language.
+The one variable the report declared irrelevant is the only one that moves the number.
+
+---
+
+## Deliverables
 
 ```
 your-submission/
-├── NOTEBOOK.md               # Graded chronological lab notebook (Log entries 01 to 07)
-├── AI_USAGE.md               # Honest disclosure of AI assistance and error corrections
+├── NOTEBOOK.md        # chronological log; Entry 09 records three claims that failed re-measurement
+├── AI_USAGE.md        # where AI helped, where it misled me, and what I can re-derive unaided
 │
-├── partA/                    # Part A: The Tokenizer Audit (50 pts)
-│   ├── README.md             # Full rendered audit report (A1, A2, A3)
-│   ├── AUDIT_REPORT.md       # Technical audit report with isolated evidence
-│   ├── memo.md               # Executive recommendation memo (≤ 1 page) (A4)
-│   ├── corpus/               # 100 parallel sentences (eng, hin, kan, tam, tel)
-│   ├── scripts/
-│   │   ├── download_corpus.py# Automated FLORES-200 parallel extraction script
-│   │   ├── audit_evidence.py # Isolated before/after experiments for fertility.py
-│   │   └── benchmark_v1.py   # Multi-tokenizer, multi-denominator benchmarking harness
-│   └── results/
-│       ├── audit_evidence.json    # Measured numerical evidence
-│       ├── benchmark_results.json # Full benchmark statistics
-│       └── corrected_metrics.csv  # Final comparison matrix
+├── partA/             # The Tokenizer Audit (50 pts)
+│   ├── AUDIT_REPORT.md    # A1 corpus + caveats, A2 evidence-backed audit, A3 corrected analysis
+│   ├── memo.md            # A4 recommendation memo (≤ 1 page)
+│   ├── corpus/            # 100 parallel FLORES-200 sentences × 5 languages
+│   ├── scripts/           # download_corpus.py, audit_evidence.py, benchmark_v1.py
+│   └── results/           # audit_evidence.json, benchmark_results.json, corrected_metrics.csv
 │
-├── partB/                    # Part B: Capacity Reconciliation (20 pts)
-│   ├── README.md             # Rendered calculations and written answers (B1, B2, B3, B4)
-│   ├── CAPACITY_REPORT.md    # Technical report with goodput derivations and log checks
-│   └── scripts/
-│       └── verify_capacity.py# Automated script reproducing all B1–B4 arithmetic
+├── partB/             # Capacity Reconciliation (20 pts)
+│   ├── CAPACITY_REPORT.md # B1–B4 calculations and written answers
+│   └── scripts/verify_capacity.py
 │
-└── partC/                    # Part C: Strategic Decision Memo (15 pts)
-    ├── README.md             # Rendered decision memo
-    └── memo.md               # Decision memo (≤ 1 page) with explicitly labelled sections
+└── partC/memo.md      # Decision Memo (15 pts)
 ```
 
----
-
-## Quick Replication & Defense Commands
-
-All scripts run synchronously out-of-the-box:
+## Reproduce Everything
 
 ```powershell
-# Part A: Run script audit experiments (The Evidence Rule)
+# A2 — all eight claims, each independently isolatable
 python your-submission/partA/scripts/audit_evidence.py
+python your-submission/partA/scripts/audit_evidence.py --flaw lowercase
+python your-submission/partA/scripts/audit_evidence.py --flaw nfc
 
-# Part A: Run full 5-language benchmark across all 4 denominators
+# A3 — 3 tokenizers × 5 denominators
 python your-submission/partA/scripts/benchmark_v1.py
 
-# Part A (Live Defense): Test any custom text input on screen
-python your-submission/partA/scripts/benchmark_v1.py --text "बेंगलुरु में आज हल्की बारिश हो रही है।"
-
-# Part B: Run capacity and goodput arithmetic verification
+# B1–B4 — all capacity and goodput arithmetic
 python your-submission/partB/scripts/verify_capacity.py
 ```
+
+**Live demo of the headline finding** — one Kannada phrase, three tokenizers:
+
+```powershell
+python your-submission/partA/scripts/benchmark_v1.py --text "ಬೆಂಗಳೂರಿನಲ್ಲಿ ಇಂದು ಮಳೆ"
+# gpt2: 62 tokens | xlm-roberta-base: 3 tokens | Qwen2.5-1.5B: 34 tokens
+```
+
+## Claims Audited
+
+| # | Claim | Verdict |
+|---|---|---|
+| 1 | `line.split(" ")` invents ghost words | Real bug — deflates fertility |
+| 2 | `line.lower()` is applied to one side only | Real bug — **shrinks** the gap 6.09× → 5.92× |
+| 3 | Macro-averaging instead of micro | Real statistical flaw |
+| 4 | Tokens-per-word vs agglutinative morphology | Real conceptual flaw — +29.1% artificial penalty |
+| 5 | Tokens-per-code-point as a denominator | Real conceptual flaw — 2.56× overstatement |
+| 6 | "The two metrics agree, so it's robust" | Real logical flaw — shared numerator |
+| 7 | `unicodedata.normalize("NFC", …)` | **Harmless and necessary** — +4.52% inflation without it |
+| 8 | `random.seed(1337)` | **Harmless** — 0 RNG consumers, provably inert |

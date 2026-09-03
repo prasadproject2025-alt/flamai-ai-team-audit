@@ -1,6 +1,6 @@
 {
   "flaw1_whitespace_split": {
-    "description": "line.split(' ') counts double spaces as empty words, inflating word count and artificially deflating fertility.",
+    "description": "REAL BUG. str.split(' ') keeps the empty string between consecutive spaces as a word; str.split() collapses whitespace runs. Ghost words inflate the denominator: eng 79 -> 78 (1 ghost), hin 62 -> 61 (1 ghost). DIRECTION: fertility is DEFLATED -- eng 1.2652 vs 1.2831 (-1.39%), hin 7.4485 vs 7.5985 (-1.97%).",
     "eng_words_naive": 79,
     "eng_words_clean": 78,
     "hin_words_naive": 62,
@@ -13,7 +13,10 @@
     "hin_fertility_deflation_pct": 1.9740862017641483
   },
   "flaw2_lowercasing": {
-    "description": "line.lower() only affects English (Indic has no case), mutating English token count by 3.1% and altering the disparity ratio.",
+    "description": "REAL BUG, but it biases AGAINST the v0 conclusion. Asymmetric transform: Hindi tokens are unchanged (459 -> 459, Devanagari has no case), while English tokens move 96 -> 99 (+3.1%) as GPT-2 BPE merge boundaries shift. DIRECTION: lowercasing RAISES the English token count, so it SHRINKS the reported disparity from 6.09x to 5.92x (-2.8%). The methodology is unsound because the transform is applied to only one side of the comparison -- but this particular bias understates the gap rather than inflating it, so correcting it makes v0's headline slightly WORSE, not better.",
+    "eng_token_change_pct": 3.125,
+    "ratio_change_pct": -2.7961705537514385,
+    "hin_tokens_unaffected": true,
     "eng_tokens_with_lower": 99,
     "eng_tokens_raw_casing": 96,
     "eng_fertility_with_lower": 1.2830627705627704,
@@ -26,14 +29,17 @@
     "ratio_raw_casing": 6.092476570635197
   },
   "flaw3_macro_vs_micro": {
-    "description": "fertility.py computes macro-average (average of ratios sum(T_i/W_i)/N) instead of micro-average (sum(T_i)/sum(W_i)).",
+    "description": "REAL STATISTICAL FLAW. fertility.py computes the macro-average sum(T_i/W_i)/N, which weights a 2-word line the same as a 50-word line; the corpus rate is the micro-average sum(T_i)/sum(W_i). DIRECTION: macro OVERSTATES both languages -- eng 1.2472 vs micro 1.2308 (+1.33%), hin 7.5985 vs micro 7.5246 (+0.98%). Small on this corpus, but it is the wrong estimator and its size is corpus-dependent.",
     "eng_macro": 1.247186147186147,
     "eng_micro": 1.2307692307692308,
     "hin_macro": 7.598452380952381,
     "hin_micro": 7.524590163934426
   },
   "flaw4_typology_words": {
-    "description": "Dravidian languages (Kannada) pack multiple morphemes per word (17.2 words/sent vs 22.2 in English, -22.5%). Measuring tokens-per-word imposes an artificial +29% penalty.",
+    "description": "REAL CONCEPTUAL FLAW. On the same 100 parallel sentences English uses 22.2 words/sent and Kannada 17.2 (22.6% fewer words for identical meaning), because Kannada binds case markers and postpositions onto the stem. Kannada therefore scores 17.07x English per WORD but only 13.22x per PARALLEL SENTENCE. DIRECTION: the word denominator INFLATES the apparent penalty by 29.1%, an artifact of morphology rather than tokenizer cost. The denominator must hold meaning constant across languages; whitespace words do not.",
+    "kan_ratio_per_word": 17.06788289749476,
+    "kan_ratio_per_sent": 13.217811158798282,
+    "word_denominator_distortion_pct": 29.12790697674419,
     "eng": {
       "tokens": 2796,
       "words": 2221,
@@ -65,7 +71,7 @@
     "artificial_word_penalty_pct": 29.12790697674419
   },
   "flaw5_codepoint_vs_bytes": {
-    "description": "len(line) measures Unicode code points (UTF-16 code units), not visual syllables or UTF-8 information bytes. Dividing by codepoints inflates Hindi/English disparity from 2.82x to 7.21x (a 2.56x overstatement).",
+    "description": "REAL CONCEPTUAL FLAW. Python 3 len(str) counts Unicode CODE POINTS (PEP 393 flexible string representation) -- not UTF-8 bytes and not grapheme clusters. Indic aksharas span several code points (2.56 UTF-8 bytes per code point for Hindi vs 1.00 for English), so the denominator swells for Indic text while the numerator is untouched. MAGNITUDE: the identical tokens scored per code point give 7.21x, but scored per UTF-8 byte give 2.82x. DIRECTION: the code-point denominator OVERSTATES the disparity by 2.56x, and is the direct source of REPORT_v0's '7.0x worse per character' headline.",
     "eng_tok_per_char": 0.21028880866425992,
     "hin_tok_per_char": 1.5158683078748332,
     "kan_tok_per_char": 2.621063829787234,
@@ -79,20 +85,65 @@
     "distortion_overstatement_factor": 2.556996750231273
   },
   "flaw6_shared_numerator_fallacy": {
-    "description": "REPORT_v0 claims tok/char corroborates tok/word. But both share the exact same numerator (token count T). When numerator is fixed via XLM-R, BOTH ratios collapse together (1.08x per word, 1.26x per char). Co-movement was an arithmetic artifact of a shared broken numerator, not independent validation.",
+    "description": "REAL CONCEPTUAL FLAW in REPORT_v0's REASONING (not in the script). v0 argues the tok/char column 'confirms' the tok/word number and concludes 'no further measurement needed'. But both metrics divide the SAME numerator (token count T), and under gpt2 that numerator is dominated by a single artifact: Devanagari falling back to byte-level tokens. Changing only the DENOMINATOR cannot test that artifact, so agreement is arithmetically guaranteed rather than corroborative. Proof: swapping the denominator leaves both large (gpt2 6.15x per word, 7.21x per code point), but swapping the NUMERATOR collapses both at once (xlm-roberta-base 1.08x per word, 1.26x per code point). Independent confirmation requires a different tokenizer, not a different divisor.",
     "gpt2_hindi_vs_eng_word_ratio": 6.151090166688342,
     "gpt2_hindi_vs_eng_char_ratio": 7.208506803112941,
     "xlmr_hindi_vs_eng_word_ratio": 1.0756081245143745,
     "xlmr_hindi_vs_eng_char_ratio": 1.260512896565099
   },
   "harmless_nfc_normalization": {
-    "description": "NFC normalization is harmless and essential: subword tokenizers are trained on NFC. Decomposed NFD text fragments into combining characters and causes severe byte-fallback token bloat.",
-    "hin_nfc_tokens": 459,
-    "hin_nfd_tokens": 459,
-    "bloat_under_nfd_pct": 0.0
+    "description": "HARMLESS AND NECESSARY. Hindi shows 0.00% because the 11 decomposable Devanagari code points Unicode defines (\u0929\u0931\u0934\u0958\u0959\u095a...) do not occur in this corpus -- NFD(text)==text is True, so a Hindi-only test cannot show anything. Measured on Dravidian corpora, which do contain decomposable characters, dropping NFC inflates token counts: kan +4.52%, tam +1.47%, tel +0.65%. DIRECTION: removing NFC INFLATES tokens by up to 4.52%. NFC costs nothing and prevents that. Flagging it as a bug would be incorrect.",
+    "per_language": {
+      "hin": {
+        "nfc_tokens": 20443,
+        "nfd_tokens": 20443,
+        "delta_pct": 0.0,
+        "nfd_is_noop_on_this_text": true,
+        "distinct_decomposable_chars_present": 0,
+        "decomposable_chars_present": ""
+      },
+      "kan": {
+        "nfc_tokens": 36957,
+        "nfd_tokens": 38628,
+        "delta_pct": 4.5214708986119,
+        "nfd_is_noop_on_this_text": false,
+        "distinct_decomposable_chars_present": 5,
+        "decomposable_chars_present": "\u0cc0\u0cc7\u0cc8\u0cca\u0ccb"
+      },
+      "tam": {
+        "nfc_tokens": 42141,
+        "nfd_tokens": 42762,
+        "delta_pct": 1.4736242614081299,
+        "nfd_is_noop_on_this_text": false,
+        "distinct_decomposable_chars_present": 3,
+        "decomposable_chars_present": "\u0bca\u0bcb\u0bcc"
+      },
+      "tel": {
+        "nfc_tokens": 35474,
+        "nfd_tokens": 35705,
+        "delta_pct": 0.6511811467553702,
+        "nfd_is_noop_on_this_text": false,
+        "distinct_decomposable_chars_present": 2,
+        "decomposable_chars_present": "\u00e7\u0c48"
+      }
+    },
+    "devanagari_decomposable_codepoints_defined_in_unicode": 11,
+    "devanagari_decomposable_examples": "\u0929\u0931\u0934\u0958\u0959\u095a\u095b\u095c\u095d\u095e\u095f",
+    "any_decomposable_devanagari_char_in_our_corpus": false,
+    "max_inflation_pct_if_nfc_removed": 4.5214708986119
+  },
+  "harmless_random_seed": {
+    "description": "HARMLESS -- dead code, not data sampling. Static scan of fertility.py finds 1 reference(s) to the random module (random.seed), of which 0 actually draw from the stream. Because nothing consumes the RNG, the seed cannot influence any reported number -- deleting line 25 changes every output by exactly 0. 'import sys' is likewise unused (0 call sites). Looks like hidden corpus sampling; is provably inert. Flagging it as a bug would be incorrect.",
+    "file_scanned": "fertility.py",
+    "all_random_references": [
+      "random.seed"
+    ],
+    "rng_consumers": [],
+    "seed_can_affect_output": false,
+    "unused_sys_import": true
   },
   "sample_size_variance": {
-    "description": "The 10-sentence sample corpus has high variance. 100 parallel sentences provide stable micro-averages.",
+    "description": "Sample-size caveat for A1: the 10-sentence smoke corpus gives 7.525 tok/word for Hindi, the 100-sentence parallel corpus gives 7.744 (+2.9%). The v0 headline rests on the noisier of the two.",
     "sample_10_sentences_hin_tpw": 7.524590163934426,
     "flores_100_sentences_hin_tpw": 7.743560606060606
   }

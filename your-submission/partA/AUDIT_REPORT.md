@@ -1,7 +1,7 @@
 # Part A: The Tokenizer Audit Report
 
-**Author:** AI Team Intern  
-**Date:** September 2, 2026  
+**Author:** Prasad  
+**Date:** September 3, 2026  
 **Subject:** Rigorous Audit of `REPORT_v0.md`, `fertility.py`, and Multilingual Tokenizer Economics  
 
 ---
@@ -12,10 +12,11 @@ This report presents an empirical audit of the tokenizer evaluation in `REPORT_v
 
 **Our audit proves this conclusion is fundamentally flawed.** 
 Through rigorous application of the Evidence Rule on a verified parallel corpus across 5 languages (English, Hindi, Kannada, Tamil, Telugu) and multiple tokenizers:
-1. **The script is not the bottleneck; the tokenizer vocabulary is.** While `gpt2` shows a 7.31× token inflation on Hindi due to 3-byte fallback tokenization, a multilingual tokenizer with Indic subwords (`xlm-roberta-base`) achieves a **1.28× parity for Hindi** and **1.35×–1.38× parity for Dravidian languages**.
-2. **The previous intern overlooked their own script's capability:** `fertility.py` already supported `--tokenizer hf:<repo_id>`. Running `python fertility.py --tokenizer hf:xlm-roberta-base` on the intern's *own original 10-line sample* immediately yields a ratio of **1.10×** (worse by only 10%, not 500%).
-3. **`fertility.py` contains critical code, metric, and logical flaws.** Naive whitespace splitting creates ghost words on irregular spaces; lowercasing artificially inflates English advantage; macro-averaging distorts the aggregate; measuring tokens per whitespace word severely penalizes agglutinative Dravidian morphology; and claiming that tok/char "corroborates" tok/word is an arithmetic fallacy of a shared broken numerator.
-4. **The true decision metric is Tokens per Parallel Sentence (Semantic Information Unit).** Using this metric, serving Indic languages incurs an overhead of only **28% to 38%**, completely invalidating the recommended 600% cost allocation.
+1. **The script is not the bottleneck; the tokenizer vocabulary is.** Holding the corpus and the text byte-identical and changing only the tokenizer moves Hindi from **7.31×** (`gpt2`, 50k) to **4.30×** (`Qwen2.5-1.5B`, 151k) to **1.28×** (`xlm-roberta-base`, 250k). The one variable `REPORT_v0.md` declared irrelevant is the only one that matters.
+2. **There is therefore no single "Hindi multiplier".** The multiplier is a property of the deployed vocabulary. Quoting **1.28×** would be as misleading as quoting **6×** — the honest planning figure for a 128k-vocab generative model of the class `bench/model_spec.md` describes is roughly **4×–7× per parallel sentence**, and the metric must name its tokenizer or it means nothing.
+3. **The previous intern overlooked their own script's capability:** `fertility.py` already supported `--tokenizer hf:<repo_id>`. Running `python fertility.py --tokenizer hf:xlm-roberta-base` on the intern's *own original 10-line sample* immediately yields a ratio of **1.10×** — the disproof was one command line away.
+4. **`fertility.py` contains code, metric, and logical flaws.** Naive whitespace splitting invents ghost words; lowercasing is applied to only one side of the comparison; macro-averaging is the wrong estimator; tokens-per-whitespace-word penalises agglutinative morphology by **+29.1%**; dividing by code points overstates the disparity by **2.56×**; and the claim that tok/char "corroborates" tok/word is an arithmetic tautology of a shared numerator.
+5. **Two things that look broken are provably fine.** `unicodedata.normalize("NFC", …)` is necessary (removing it inflates Kannada tokens **+4.52%**), and `random.seed(1337)` is inert dead code (**0** RNG consumers). Both are documented with measurements rather than asserted.
 
 ---
 
@@ -38,6 +39,10 @@ The 10-sentence smoke test in `starter_kit/corpus_sample/` is statistically insu
 1. **Formal & Encyclopedic Domain**: FLORES-200 consists of news, Wikipedia, and literature articles translated by professional human translators. Sentences are grammatically complete and textbook-standard.
 2. **Absence of Conversational Code-Switching**: Real-world Indian conversational traffic is dominated by Latin-script transliterations (Hinglish, Tanglish, Kanglish) and mixed-script code-switching.
 3. **Prompt Distribution Mismatch**: Production user queries frequently consist of single phrases, questions with informal grammar, and slang, whereas FLORES sentences have an average length of 22 words in English and 17–26 words in Indic scripts.
+4. **Non-random sampling**: `download_corpus.py` takes the **first 100** of FLORES-200 dev's 997 sentences (`cleaned[:100]`). FLORES dev is ordered by source article, so these 100 are **topically clustered** rather than a random sample — they are drawn from a handful of source documents. Effects of the size we report (4×–13×) are far too large to be sampling artifacts, but this corpus cannot support tight confidence intervals, and we do not quote any.
+5. **What the alignment check actually proves**: the assertion in `download_corpus.py` verifies that all five files contain an **equal number of lines** — it does not verify semantic parallelism. Line-level parallelism is guaranteed by FLORES-200's construction, not by our script. We rely on the dataset's guarantee and state so rather than implying we validated it.
+
+**Summary of what this corpus cannot tell us:** it cannot tell us anything about code-switched or Latin-transliterated Indic input, which is the dominant form of real consumer chat traffic in India and tokenizes on a completely different path. It cannot tell us about short conversational turns, since every sentence here is a complete, professionally translated declarative sentence. It cannot give us per-domain variance, because 100 topically clustered sentences from a handful of articles is not a domain sample. And it cannot validate any absolute cost forecast — only the *relative* efficiency of one tokenizer against another on formal written text.
 
 ---
 
@@ -74,13 +79,15 @@ python your-submission/partA/scripts/audit_evidence.py --flaw whitespace
 python your-submission/partA/scripts/audit_evidence.py --flaw lowercase
 ```
 - **Location**: `fertility.py:60`: `line = line.lower()`
-- **Mechanism**: Indic scripts (Devanagari, Kannada, Tamil, Telugu) have no grammatical concept of upper/lower case; `.lower()` is a complete no-op on Indic strings. However, English tokenization in GPT-2 BPE is highly sensitive to case: common lowercased words are represented as single tokens, while capitalized words (e.g. `"Bengaluru"`, `"March"`, `"Thursday"`, `"NASA"`) often fragment into multiple subwords. Lowercasing English artificially lowers English token counts, exaggerating the perceived disparity.
+- **Mechanism**: Indic scripts (Devanagari, Kannada, Tamil, Telugu) have no grammatical concept of upper/lower case, so `.lower()` is a complete no-op on Indic strings. English GPT-2 BPE is highly case-sensitive: casing changes shift merge boundaries (e.g. `"Bengaluru"`, `"NASA"`). **The transform is therefore applied to only one side of a two-sided comparison** — which is the defect, independent of which way it happens to push.
 - **Measured Evidence**:
-  - Hindi tokens with lowercasing: 459 tokens; without lowercasing: 459 tokens (0% change).
-  - English tokens with lowercasing: 99 tokens; without lowercasing: **96 tokens** (tokenization boundaries shift).
-  - English fertility shifts from **1.283** to **1.247**.
-  - Reported disparity ratio shifts from **5.92×** to **6.09×**.
-- **Direction & Magnitude**: Asymmetric distortion that mutates the English baseline while having zero effect on Indic scripts.
+  - Hindi tokens: 459 with lowercasing, 459 without — **0% change**, confirming the no-op.
+  - English tokens: **96 without** lowercasing → **99 with** it (**+3.1%**).
+  - English fertility: 1.247 → 1.283.
+  - Reported disparity ratio: **6.09× without** lowercasing → **5.92× with** it (**−2.8%**).
+- **Direction & Magnitude**: Lowercasing **raises** the English token count, and therefore **shrinks** the reported disparity by **2.8%** (6.09× → 5.92×).
+
+> **Note on which way this cuts.** Our first write-up of this finding stated the opposite — that lowercasing "exaggerates the disparity" — which contradicts the numbers above. Correcting it means this particular flaw biases **against** `REPORT_v0`'s own conclusion: removing it makes Hindi look marginally *worse*, not better. We flag it because the methodology is unsound (a one-sided transform in a two-sided comparison), not because it inflates the headline. See `NOTEBOOK.md` Log Entry 09B.
 
 ---
 
@@ -114,13 +121,13 @@ python your-submission/partA/scripts/audit_evidence.py --flaw typology
 
 ---
 
-### 5. Conceptual Flaw: "Tokens Per Char" Divides by Python UTF-16 Code Points
+### 5. Conceptual Flaw: "Tokens Per Char" Divides by Unicode Code Points
 **Exact Command:**
 ```powershell
 python your-submission/partA/scripts/audit_evidence.py --flaw char-denominator
 ```
 - **Location**: `fertility.py:63`: `chars = len(line)`
-- **Mechanism**: In Python, `len(line)` returns the number of UTF-16 code units / Unicode scalar values, not visual graphemes (aksharas) or UTF-8 bytes. Indic scripts encode complex conjuncts by combining consonants, viramas, and dependent vowel signs (matras). A single visual syllable like *kṣi* (`क्षि`) is 4 Unicode code points (`क` + `्` + `ष` + `ि`), while English characters are 1 code point.
+- **Mechanism**: In Python 3, `len(line)` returns the number of Unicode **code points** (PEP 393 flexible string representation) — not UTF-8 bytes, and not visual graphemes (aksharas). Indic scripts encode complex conjuncts by combining consonants, viramas, and dependent vowel signs (matras). A single visual syllable like *kṣi* (`क्षि`) is 4 Unicode code points (`क` + `्` + `ष` + `ि`), while English characters are 1 code point each.
 - **Measured Evidence & Distortion Magnitude**:
   - English: 1.00 UTF-8 bytes per character; `tok/char` = 0.210, `tok/byte` = 0.210.
   - Hindi: 2.56 UTF-8 bytes per character; `tok/char` = 1.516, `tok/byte` = 0.592.
@@ -150,17 +157,44 @@ python your-submission/partA/scripts/audit_evidence.py --flaw shared-numerator
 python your-submission/partA/scripts/audit_evidence.py --flaw nfc
 ```
 - **Location**: `fertility.py:49`: `line = unicodedata.normalize("NFC", line)`
-- **Why it looks suspicious**: To an inexperienced auditor, normalizing input strings looks like an unnecessary data transformation that might mutate text.
-- **Why it is actually fine and necessary**: Indic scripts can be represented in Unicode as Canonical Decomposition (NFD: base consonant + independent combining mark) or Canonical Composition (NFC: precomposed characters). Modern tokenizers (SentencePiece, BPE) are trained on NFC-normalized text. If un-normalized NFD text is fed into a tokenizer, combining diacritics fail vocabulary lookups and decompose into fallback byte tokens, inflating token counts. NFC normalization is standard industry best practice.
-- **Verdict**: Harmless and required. Flagging it as a bug would be incorrect.
+- **Why it looks suspicious**: Normalising input mutates the text before it is measured, which looks like it could silently change the numbers being reported.
+- **The trap we initially fell into**: our first test compared NFC vs NFD **on Hindi alone** and measured a **0.00% delta** (20,443 tokens either way). We were about to write that up as proof the normalisation "prevents token bloat" — but a 0.00% result proves no such thing. Investigating why revealed the test was structurally incapable of showing an effect.
+- **Root cause, measured**: Unicode defines **11** decomposable Devanagari code points (the nukta forms `ऩ ऱ ऴ क़ ख़ ग़ ज़ ड़ ढ़ फ़ य़`). **None of them occur in our Hindi corpus**, so `NFD(text) == text` returns `True` and the delta is necessarily zero. A Hindi-only test can never move.
+- **Correct evidence — measured on the Dravidian corpora, which do contain decomposable characters**:
+
+| Language | Decomposable chars present | NFC tokens | NFD tokens | Δ if NFC removed |
+|---|---|---|---|---|
+| Hindi | 0 (`NFD(text)==text`) | 20,443 | 20,443 | **0.00%** |
+| Kannada | 5 (`ೀ ೇ ೈ ೊ ೋ`) | 36,957 | 38,628 | **+4.52%** |
+| Tamil | 3 (`ொ ோ ௌ`) | 42,141 | 42,762 | **+1.47%** |
+| Telugu | 2 | 35,474 | 35,705 | **+0.65%** |
+
+- **Direction & Magnitude**: Removing NFC **inflates** token counts by up to **+4.52%**. The normalisation costs nothing and prevents that inflation.
+- **Verdict**: **Harmless and necessary.** Flagging it as a bug would be incorrect — and, as our own dead end shows, "proving" it with a Hindi-only test would have been equally wrong.
+
+---
+
+### 8. The Second Harmless Element: `random.seed(1337)`
+**Exact Command:**
+```powershell
+python your-submission/partA/scripts/audit_evidence.py --flaw seed
+```
+- **Location**: `fertility.py:25`: `random.seed(1337)  # reproducibility`
+- **Why it looks suspicious**: A seeded RNG explicitly labelled *"reproducibility"* strongly implies the script samples or shuffles the corpus. If it did, every number in `REPORT_v0.md` would depend on a hidden, undocumented subset of the data — which would be a far more serious finding than any of the bugs above.
+- **Measured Evidence (static scan of `fertility.py`)**: the module contains exactly **1** reference to `random` — the `seed` call itself — and **0** call sites that draw from the stream. `import sys` is likewise never used (**0** call sites).
+- **Direction & Magnitude**: **Exactly zero.** Nothing consumes the RNG, so deleting line 25 changes every reported number by 0.
+- **Verdict**: **Harmless.** Suspicious-looking, provably inert dead code. Flagging it as a bug would cost points under the evidence rule.
 
 ---
 
 ## A3. Corrected Multi-Tokenizer & Multi-Denominator Analysis
 
-We evaluated the 100-sentence parallel corpus across two distinct tokenizer architectures:
-1. **`gpt2` (tiktoken)**: 50,257 vocab, English-centric byte-level BPE.
-2. **`xlm-roberta-base` (transformers)**: 250,002 vocab, multilingual SentencePiece trained on 100+ languages including Indic.
+We evaluated the 100-sentence parallel corpus across three deliberately different tokenizer architectures:
+1. **`gpt2` (tiktoken)**: 50,257 vocab, English-centric byte-level BPE — *what `REPORT_v0.md` used*.
+2. **`xlm-roberta-base` (transformers)**: 250,002 vocab, multilingual SentencePiece covering 100+ languages including Indic — *best realistic case, but encoder-only and never used for generative serving*.
+3. **`Qwen/Qwen2.5-1.5B` (transformers)**: 151,643 vocab, generative, ungated — *the closest available public proxy for the production model*, which `bench/model_spec.md` specifies as **FLM-4B with a 128k vocab*.
+
+Including a third tokenizer is not padding. Reporting only `xlm-roberta-base` would make the headline depend on a model we do not serve, and would collapse the moment anyone re-ran the analysis against the deployed vocabulary.
 
 ### Summary Results Table Across All 4 Denominators
 
@@ -182,6 +216,25 @@ Results: your-submission/partA/results/corrected_metrics.csv
 | `xlm-roberta-base` | **kan** | 17.2 | 92.2 | 43.1 | **1.38×** | 2.51 | 1.78× | 0.47 | 1.99× | 0.114 | 0.49× |
 | `xlm-roberta-base` | **tam** | 17.5 | 100.9 | 42.8 | **1.37×** | 2.44 | 1.74× | 0.42 | 1.81× | 0.101 | 0.43× |
 | `xlm-roberta-base` | **tel** | 17.6 | 79.3 | 42.3 | **1.35×** | 2.40 | 1.71× | 0.53 | 2.27× | 0.117 | 0.50× |
+| | | | | | | | | | | | |
+| **`Qwen2.5-1.5B`** | **eng** | 22.2 | 133.0 | 29.1 | **1.00×** | 1.31 | 1.00× | 0.22 | 1.00× | 0.218 | 1.00× |
+| `Qwen2.5-1.5B` | **hin** | 26.4 | 88.7 | 125.0 | **4.30×** | 4.73 | 3.62× | 1.41 | 6.45× | 0.362 | 1.66× |
+| `Qwen2.5-1.5B` | **kan** | 17.2 | 92.2 | 194.7 | **6.70×** | 11.32 | 8.65× | 2.11 | 9.66× | 0.514 | 2.35× |
+| `Qwen2.5-1.5B` | **tam** | 17.5 | 100.9 | 171.7 | **5.91×** | 9.80 | 7.49× | 1.70 | 7.78× | 0.405 | 1.85× |
+| `Qwen2.5-1.5B` | **tel** | 17.6 | 79.3 | 197.4 | **6.79×** | 11.21 | 8.56× | 2.49 | 11.39× | 0.549 | 2.51× |
+
+### The Single Most Important Result in This Table
+
+Hold the corpus, the denominator, and the text **byte-identical**, and change only the tokenizer:
+
+| Language | `gpt2` (50k) | `xlm-roberta-base` (250k) | `Qwen2.5-1.5B` (151k) |
+|---|---|---|---|
+| Hindi | 7.31× | **1.28×** | **4.30×** |
+| Kannada | 13.22× | **1.38×** | **6.70×** |
+| Tamil | 15.07× | **1.37×** | **5.91×** |
+| Telugu | 12.69× | **1.35×** | **6.79×** |
+
+**The cost multiplier is a property of the deployed vocabulary, not of the language.** The same Kannada sentence costs 1.38× or 6.70× English depending purely on which tokenizer is loaded. Any single headline multiplier quoted without naming its tokenizer is meaningless — and that includes the 1.28× figure we could have led with.
 
 ---
 
@@ -196,8 +249,24 @@ When a user submits a prompt, their goal is to communicate a specific semantic u
 1. **Why Tokens/Word Fails**: Words do not hold semantic content constant across languages. A language with agglutinative morphology (Kannada/Tamil) expresses in 1 word what English expresses in 3 words. Dividing by words introduces typological noise that has nothing to do with infrastructure cost.
 2. **Why Tokens/Grapheme Cluster Fails**: Grapheme clusters measure visual orthography. Devanagari and Dravidian scripts are syllabic alphabets (abugidas) where one akshara encodes a full syllable, whereas English Latin script is alphabetic (single phonemes). Ratios based on graphemes compare apples to oranges.
 3. **Why Tokens/Byte Fails**: Bytes measure storage encoding efficiency (e.g. UTF-8 multi-byte sequences), not user intent.
-4. **Why Tokens/Parallel Sentence Succeeds**: Parallel sentences hold semantic information constant. On `xlm-roberta-base`, expressing a standard sentence takes **31.2 tokens in English** and **39.9 tokens in Hindi**. 
+4. **Why Tokens/Parallel Sentence Succeeds**: Parallel sentences hold the semantic payload constant. Whatever the tokenizer, both sides of the ratio are expressing the *same meaning*, so the ratio isolates tokenizer efficiency rather than typology or orthography.
 
-$$\text{True Cost Multiplier} = \frac{\text{Tokens}_{\text{Indic}}}{\text{Tokens}_{\text{English}}} = \frac{39.9}{31.2} = \mathbf{1.28\times}$$
+$$\text{Cost Multiplier}_{\text{tokenizer}} = \frac{\text{Tokens per parallel sentence}_{\text{Indic}}}{\text{Tokens per parallel sentence}_{\text{English}}}$$
 
-**Conclusion**: Serving Hindi is only **28% more expensive** than English per request under a proper multilingual model—not 500%–600% more expensive as claimed in `REPORT_v0.md`. Dravidian languages incur an overhead of only **35% to 38%**.
+### But the number is only meaningful when paired with a tokenizer
+
+This is where our audit departs most sharply from `REPORT_v0.md`. The report treated the multiplier as a fact about **Hindi**. It is not. It is a fact about **the vocabulary you deploy**:
+
+$$\frac{125.0}{29.1} = \mathbf{4.30\times}\ \text{(Qwen2.5, 151k)} \qquad \frac{39.9}{31.2} = \mathbf{1.28\times}\ \text{(XLM-R, 250k)}$$
+
+Both are correct measurements of the same corpus. Quoting either alone would be misleading.
+
+**Conclusion — the number that should drive routing and cost:**
+
+> **Tokens per parallel sentence, measured on the tokenizer actually deployed in production, monitored per language.**
+
+Three consequences follow:
+
+1. **`REPORT_v0.md`'s root-cause claim is refuted.** It concluded the 6× penalty is *"a property of the script, not the tokenizer."* Holding the script and corpus fixed and changing only the tokenizer moves Hindi across the range **7.31× → 4.30× → 1.28×**. The penalty is a property of the tokenizer, and it is the one variable the report declared irrelevant.
+2. **The 6× serving budget is wrong, but so is a flat 1.35×.** On a 128k-vocab generative model of the class `model_spec.md` describes, the honest planning range for Indic traffic is roughly **4×–7× per parallel sentence**, not 1.35× and not a blanket 6×.
+3. **Vocabulary selection is the cost lever, not routing.** Moving from a 151k general-purpose vocabulary to an Indic-aware one is worth up to a **~5× reduction** in tokens per Indic request — a far larger saving than any routing topology can deliver, and it is a procurement decision rather than an infrastructure one.

@@ -1,8 +1,8 @@
 # Decision Memo: Casualizing Multilingual Assistant Outputs
 
 **TO:** Leadership & Product Team  
-**FROM:** AI Engineering Team  
-**DATE:** September 2, 2026  
+**FROM:** Prasad — AI Team Intern  
+**DATE:** September 3, 2026  
 **SUBJECT:** Architectural Recommendation: Conversational Tone across 6 Indic Languages  
 
 ---
@@ -23,24 +23,23 @@ Path (b) (Rewriter Model) is disqualified: placing a 1B model on our single 24GB
 
 ### 2. Back-of-Envelope Arithmetic
 
-- **Reviewer Throughput**:
-  - $1\text{ reviewer} \times 10\text{ h/week} = 600\text{ mins/week}$.
-  - At $2\text{ mins}$ per side-by-side evaluation: $\frac{600}{2} = \mathbf{300\text{ evaluations/week}}$ (150 Hindi, 150 Kannada; 900 total over 3 weeks).
-  - 4 languages have zero internal human evaluation bandwidth.
-- **Serving Cost (Path c vs. Path b)**:
-  - *Path (c)*: Adding $\sim 180$ system prompt tokens with vLLM's `enable_prefix_caching=True` computes the prefix once. Incremental VRAM = **$0\text{ MB}$**, prefill overhead = **$< 5\text{ ms}$**, generation throughput = **unaffected**.
-  - *Path (b)*: A 1B model in FP16 consumes $2.5\text{ GB}$ VRAM, shrinking available KV cache from $12.08\text{ GB}$ to $9.58\text{ GB}$. Concurrency drops from **25 to 20 sequences (-20%)**, and serial execution **doubles end-to-end latency**.
-- **Data Volume & Training (Path a Contingency)**:
-  - 2,000 response pairs per language $\times 6\text{ languages} = 12,000\text{ pairs}$ ($\sim 4.8\text{M tokens}$).
-  - FLM-4B LoRA SFT (rank 16) on 1× A100 trains at $\sim 3,000\text{ tok/s}$:
-    $$\text{Training Time} = \frac{4.8\text{M tokens} \times 3\text{ epochs}}{3,000\text{ tok/s}} = 4,800\text{ s} = \mathbf{1.33\text{ hours per run}}$$
-  - Compute is plentiful; the true bottleneck is synthetic data quality without external APIs and lack of human reviewers for 4 languages.
+- **Reviewer throughput**: $10\text{ h/wk} = 600\text{ min}$; at 2 min/eval → **300 evals/week** (900 over 3 weeks). **4 of 6 languages have zero human evaluation bandwidth.**
+- **Serving cost, (c) vs (b)**: Path (c) adds ~180 system-prompt tokens; with `enable_prefix_caching=True` the prefix is computed once → **0 MB** incremental VRAM, <5 ms prefill, throughput unaffected. Path (b)'s 1B FP16 rewriter costs 2.5 GB, cutting KV cache $12.08 \to 9.58\text{ GB}$ and concurrency **25 → 20 sequences (−20%)**, while serial two-model generation **doubles latency**.
+- **Path (a) contingency**: 2,000 pairs × 6 languages = 12,000 pairs ≈ 4.8M tokens. LoRA (r=16) on 1× A100 at ~3,000 tok/s → $\frac{4.8\text{M} \times 3}{3000} = \mathbf{1.33\text{ h/run}}$. **Compute is not the constraint** — synthetic data quality without external APIs, and the 4 unreviewed languages, are.
 
 ---
 
 ### 3. Success Metric & Numeric Threshold
-$$\mathbf{\ge 75\% \text{ Win Rate in Blind A/B Evaluation for Conversational Casualness with } \le 2\% \text{ Fact/Grammar Regressions}}$$
-Evaluated by the native reviewer across a standardized test set of 100 conversational prompts in Hindi and Kannada against current production outputs.
+$$\mathbf{\ge 75\% \text{ Win Rate in Blind A/B Evaluation for Casualness, with } \le 2\% \text{ Fact/Grammar Regressions}}$$
+Judged by the native reviewer on **n = 100** prompts per language (Hindi, Kannada) vs. current production output — 200 evaluations, ≈3.3 reviewer-days at 60/day, so it completes before the Day 4 gate.
+
+**Sample-size honesty:** at n = 100, a 75% observed rate carries a 95% CI of ≈**±8.5 points**. 75% observed is *not* statistically separable from 66% true, so this is a decision rule, not a measurement — hence the explicit middle band:
+
+| Win rate (better of hin/kan) | Decision |
+|---|---|
+| **≥ 75%** | Ship. Freeze prompt; extend to the 4 unreviewed languages under automated checks only. |
+| **60–74%** | **One** more iteration, re-tested by **Day 7**. Still < 75% → pivot to Path (a). No third iteration; the A100 window closes. |
+| **< 60%** | Kill immediately (§4). |
 
 ---
 
@@ -52,9 +51,6 @@ Evaluated by the native reviewer across a standardized test set of 100 conversat
 ---
 
 ### 5. First Experiment (Day 1)
-1. **Morning**: Build a test suite of 50 conversational customer queries (greetings, product inquiries, humor, complaints).
-2. **Afternoon**: Run FLM-4B inference across 3 prompt architectures:
-   - *Variant 1*: Explicit persona instructions on spoken verb endings and informal pronouns.
-   - *Variant 2*: 3 few-shot exemplars contrasting formal textbook vs. spoken colloquial responses.
-   - *Variant 3*: Hybrid persona + few-shot exemplars + allowable colloquial loanwords.
-3. **Evening**: Deliver 100 blind paired outputs (50 Hindi, 50 Kannada) to the reviewer for baseline scoring on Day 2 morning.
+1. **Morning**: Build a 50-query conversational test suite (greetings, product questions, humour, complaints).
+2. **Afternoon**: Run FLM-4B across 3 prompt variants — (1) persona instructions on spoken verb endings and informal pronouns; (2) 3 few-shot exemplars contrasting textbook vs. colloquial; (3) hybrid persona + few-shot + permitted loanwords.
+3. **Evening**: Ship the first 100 blind pairs (50 hin, 50 kan) to the reviewer for Day 2 scoring — this establishes the baseline and calibrates the 2 min/eval throughput assumption before we commit to the full n = 200 run.
