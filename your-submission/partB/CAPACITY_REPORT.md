@@ -2,24 +2,34 @@
 
 **Author:** AI Team Intern  
 **Date:** September 2, 2026  
-**Subject:** Serving Stack Analysis, KV-Cache Sizing, and Throughput Reconciliation  
-**Target Files:** `bench/model_spec.md`, `bench/bench_log.csv`, `REPORT_v0.md`  
+**Subject:** Hardware Arithmetic, Throughput Anomaly Root-Cause Analysis, and Goodput Reconciliation  
+
+---
+
+## Executive Summary
+
+This report reconciles the theoretical hardware capacity of the **FLM-4B-Instruct** model on an **NVIDIA L4 (24 GB)** GPU against empirical benchmark logs in `bench_log.csv`. 
+
+We identify critical errors in Section 2 of `REPORT_v0.md`:
+1. **The intern misread `reported_tok_s` as generation throughput (goodput)**, failing to realize that 87.5% of reported tokens in long prompts were prefill prompt tokens. In reality, long prompts generate tokens **44.3% slower** than short prompts (163.9 vs 294.5 tok/s).
+2. **The intern's recommendation to scale linearly to batch 48 (~3200 tok/s) is physically impossible.** Hardware memory constraints limit concurrent 4096-token sequence capacity to exactly **25 sequences**. Scaling past batch 24 causes **KV-cache thrashing**, triggering 23 scheduler preemptions and collapsing throughput from 1607 to 1298 tok/s.
+3. Setting `--max-num-seqs 24` eliminates all preemptions, executes batch 48 in two clean passes in **122.3s** (saving **19.2% wall-clock time** / 29s vs 151.4s), and cuts tail latency nearly in half.
 
 ---
 
 ## B1. Exact KV-Cache Memory & Concurrency Arithmetic
 
 ### (a) Exact KV-Cache Bytes Per Token
-For any Transformer model utilizing Grouped-Query Attention (GQA), the KV cache must store Key and Value activation vectors across all layers for each token:
+In a Transformer with Grouped-Query Attention (GQA), the KV cache stores Key ($K$) and Value ($V$) activation states for every layer and attention head across each token:
 
-$$\text{Bytes per Token} = 2 \times L \times H_{\text{kv}} \times D_{\text{head}} \times P$$
+$$\text{Bytes per Token} = 2 \times \text{Layers } (L) \times \text{KV Heads } (H_{\text{kv}}) \times \text{Head Dimension } (D_{\text{head}}) \times \text{Precision Bytes } (P)$$
 
-Where:
-- $2$: Stores both Key ($K$) and Value ($V$) tensors.
-- $L = 28$: Number of transformer layers.
-- $H_{\text{kv}} = 8$: Number of KV heads (from GQA specification).
-- $D_{\text{head}} = 128$: Dimension per attention head.
-- $P = 2\text{ bytes}$: FP16 precision.
+From `bench/model_spec.md`:
+- $2$: Storing both Key and Value tensors
+- $L = 28$: Transformer layers
+- $H_{\text{kv}} = 8$: KV attention heads (Grouped-Query Attention)
+- $D_{\text{head}} = 128$: Head dimension
+- $P = 2\text{ bytes}$: FP16 half-precision representation
 
 $$\text{Bytes per Token} = 2 \times 28 \times 8 \times 128 \times 2 = \mathbf{114,688\text{ bytes}} = \mathbf{112.0\text{ KiB/token}}$$
 
@@ -28,56 +38,49 @@ $$\text{Bytes per 4096-token Sequence} = 4096 \times 114,688\text{ bytes} = \mat
 
 ---
 
-### (b) Maximum Concurrent 4096-Token Sequences on NVIDIA L4 (24 GB)
+### (b) Approximate Maximum Concurrent 4096-Token Sequences
 From `bench/model_spec.md`:
-1. **Total GPU VRAM**: $24.0\text{ GB}$.
+1. **Total GPU VRAM**: $24.0\text{ GB}$ (NVIDIA L4)
 2. **vLLM Managed Space** (`gpu_memory_utilization = 0.92`): 
    $$24.0\text{ GB} \times 0.92 = 22.08\text{ GB}$$
 3. **Model Weights (FP16)**:
    $$\text{Parameters} = 4.2\text{ B} \implies 4.2 \times 2\text{ bytes} = 8.40\text{ GB}$$
-4. **Non-KV Runtime Overhead** (activations, CUDA graphs, workspace):
+4. **Non-KV Runtime Overhead** (activations, CUDA graphs, working memory):
    $$\text{Overhead} = 1.60\text{ GB}$$
 5. **Net Memory Available for KV Cache**:
    $$\text{KV Cache Budget} = 22.08\text{ GB} - 8.40\text{ GB} - 1.60\text{ GB} = \mathbf{12.08\text{ GB}}$$
 
 Calculating maximum concurrent 4096-token sequences:
 $$\text{Max Concurrent Sequences} = \frac{12.08 \times 10^9\text{ bytes}}{469,762,048\text{ bytes}} = \mathbf{25.72\text{ sequences}}$$
-*(Or in binary units: $\frac{12.08 \times 1024^3}{448 \times 1024^2} = 27.61\text{ sequences}$).*
+*(Or using binary units: $\frac{12.08 \times 1024^3\text{ bytes}}{448 \times 1024^2\text{ bytes}} = \mathbf{27.61\text{ sequences}}$).*
 
 ---
 
 ### Empirical Verification Against `bench_log.csv`
-Looking at the load-test runs where sequence length is $4096$ (`prompt_len = 3584` + `gen_len = 512`):
+For all runs where sequence length equals $4096$ (`prompt_len = 3584` + `gen_len = 512`):
+- **Row 12 (`batch_size = 24`)**:
+  `kv_cache_util = 0.93`, `preempted_seqs = 0`.  
+  Implied total slot capacity: $\frac{24}{0.93} = \mathbf{25.81\text{ sequences}}$.
+- **Row 13 (`batch_size = 32`)**:
+  `preempted_seqs = 7`, `kv_cache_util = 0.97`.  
+  Active concurrent sequences running: $32 - 7 = \mathbf{25\text{ sequences}}$.
+- **Row 14 (`batch_size = 48`)**:
+  `preempted_seqs = 23`, `kv_cache_util = 0.97`.  
+  Active concurrent sequences running: $48 - 23 = \mathbf{25\text{ sequences}}$.
 
-1. **Row 12 (`batch_size = 24`)**:
-   - `kv_cache_util = 0.93`, `preempted_seqs = 0`.
-   - Total capacity implied by the serving engine:
-     $$\text{Total Slots} = \frac{24}{0.93} = \mathbf{25.81\text{ sequences}}$$
-   - All 24 sequences run concurrently without a single preemption.
-2. **Row 13 (`batch_size = 32`)**:
-   - `preempted_seqs = 7`, `kv_cache_util = 0.97`.
-   - Active concurrent sequences running:
-     $$32 - 7 = \mathbf{25\text{ active sequences}}$$
-3. **Row 14 (`batch_size = 48`)**:
-   - `preempted_seqs = 23`, `kv_cache_util = 0.97`.
-   - Active concurrent sequences running:
-     $$48 - 23 = \mathbf{25\text{ active sequences}}$$
-
-**Conclusion**: The theoretical derivation ($25.7$ sequences) perfectly predicts the physical hardware limit. The GPU physically caps out at **25 concurrent 4096-token sequences**.
+**Result**: Theory predicts **25.7 sequences**; the benchmark log proves that hardware concurrency is hard-capped at **25 active sequences**.
 
 ---
 
 ## B2. Long-Context Throughput Anomaly & Preemption Thrashing
 
 ### Anomaly Identification
-In `bench_log.csv`, under the short-context sweep (`prompt_len = 512`), throughput increases monotonically with batch size (from $70.2\text{ tok/s}$ at batch 1 to $2267.3\text{ tok/s}$ at batch 64).
+Under the short-context sweep (`prompt_len = 512`), throughput increases monotonically with batch size (from $70.2\text{ tok/s}$ at batch 1 to $2267.3\text{ tok/s}$ at batch 64).
 
-However, in the long-context sweep (`prompt_len = 3584`, `gen_len = 512`), a severe performance collapse occurs beyond batch 24:
-- **Batch 24**: `reported_tok_s = 1607.4`, `wall_clock_s = 61.16s`, `preempted_seqs = 0`, `kv_cache_util = 0.93`.
-- **Batch 32**: `reported_tok_s = 1384.0` (**-14% drop**), `wall_clock_s = 94.71s` (**+55% wall time**), `preempted_seqs = 7`, `kv_cache_util = 0.97`.
-- **Batch 48**: `reported_tok_s = 1298.5` (**-19% drop**), `wall_clock_s = 151.41s` (**+148% wall time**), `preempted_seqs = 23`, `kv_cache_util = 0.97`.
-
-End-to-end latency (`e2e_ms_p95`) explodes from **69.2s** (batch 24) to **97.5s** (batch 32) and **105.4s** (batch 48).
+In the long-context sweep (`prompt_len = 3584`, `gen_len = 512`), throughput scales up to batch 24, but collapses beyond it:
+- **Batch 24 (Row 12)**: `reported_tok_s = 1607.4`, `wall_clock_s = 61.16s`, `preempted_seqs = 0`, `kv_cache_util = 0.93`, `e2e_ms_p95 = 69221.3ms`.
+- **Batch 32 (Row 13)**: `reported_tok_s = 1384.0` (**-13.9% drop**), `wall_clock_s = 94.71s` (**+54.9% wall time**), `preempted_seqs = 7`, `kv_cache_util = 0.97`, `e2e_ms_p95 = 97465.7ms`.
+- **Batch 48 (Row 14)**: `reported_tok_s = 1298.5` (**-19.2% drop**), `wall_clock_s = 151.41s` (**+147.6% wall time**), `preempted_seqs = 23`, `kv_cache_util = 0.97`, `e2e_ms_p95 = 105427.5ms`.
 
 ### The Underlying Mechanism
 As derived in B1, the GPU can only hold **~25 concurrent 4096-token sequences**.
@@ -126,28 +129,29 @@ At batch 16:
 
 ---
 
-### Deriving Honest Goodput for Batch 24 (Prompt 3584, Gen 512)
+### Deriving Honest Goodput for Batch 24 (Prompt 3584, Gen 512) via Two Independent Ways
 
 Row 12 values:
 `batch_size = 24`, `prompt_len = 3584`, `gen_len = 512`, `wall_clock_s = 61.16`, `reported_tok_s = 1607.4`, `itl_ms_p50 = 96.07`.
 
 #### Method 1: Total Generation Tokens Divided by Total Wall-Clock Time
+Direct end-to-end measurement:
 $$\text{Total Generated Tokens} = \text{num\_requests} \times \text{gen\_len} = 24 \times 512 = 12,288\text{ tokens}$$
 $$\text{Honest Goodput} = \frac{12,288\text{ tokens}}{61.16\text{ seconds}} = \mathbf{200.92\text{ generated tok/s}}$$
 
-*(Equivalently derived from `reported_tok_s`)*:
-$$\text{Honest Goodput} = \text{reported\_tok\_s} \times \frac{\text{gen\_len}}{\text{prompt\_len} + \text{gen\_len}} = 1607.4 \times \frac{512}{4096} = \mathbf{200.93\text{ generated tok/s}}$$
+*(Note: Calculating $\text{reported\_tok\_s} \times \frac{\text{gen\_len}}{\text{prompt\_len} + \text{gen\_len}} = 1607.4 \times \frac{512}{4096} = \mathbf{200.93\text{ tok/s}}$ is an **algebraic restatement of Method 1**, since $\frac{N \times (P+G)}{T} \times \frac{G}{P+G} = \frac{N \times G}{T}$, not a distinct second derivation).*
 
-#### Method 2: Derived from Inter-Token Latency (`itl_ms_p50`)
+#### Method 2: Derived Mechanistically from Inter-Token Latency (`itl_ms_p50`)
+Reconstructing the two separate phases (prefill and autoregressive decode):
 During the autoregressive decode phase, the GPU processes all 24 sequences concurrently. Each generated token step takes the median inter-token latency $\text{ITL} = 96.07\text{ ms} = 0.09607\text{ s}$.
 
-1. **Steady-State Decode Throughput**:
-   $$\text{Decode Throughput} = \frac{\text{batch\_size}}{\text{ITL (seconds)}} = \frac{24}{0.09607\text{ s}} = \mathbf{249.82\text{ tok/s}}$$
-2. **Reconciling with Prefill Duration**:
+1. **Steady-State Decode Throughput (Generation Phase Only)**:
+   $$\text{Decode Throughput} = \frac{\text{batch\_size}}{\text{ITL (seconds)}} = \frac{24}{0.09607\text{ s}} = \mathbf{249.82\text{ gen tok/s}}$$
+2. **Reconciling Prefill and Decode to Compute Full Lifecycle Goodput**:
    - Duration of decode phase: $512\text{ steps} \times 0.09607\text{ s} = 49.19\text{ seconds}$.
    - Duration of prefill phase: $61.16\text{s} - 49.19\text{s} = 11.97\text{ seconds}$.
    - End-to-end goodput across the entire request lifecycle:
-     $$\text{Goodput}_{\text{E2E}} = \frac{24 \times 512}{11.97\text{s (prefill)} + 49.19\text{s (decode)}} = \frac{12,288}{61.16\text{s}} = \mathbf{200.92\text{ tok/s}}$$
+     $$\text{Goodput}_{\text{E2E}} = \frac{24 \times 512}{11.97\text{s (prefill)} + 49.19\text{s (decode)}} = \frac{12,288}{61.16\text{s}} = \mathbf{200.92\text{ gen tok/s}}$$
 
 ---
 

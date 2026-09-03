@@ -44,10 +44,10 @@ Our evaluation used the **FLORES-200** parallel corpus, which consists of formal
 
 To validate these findings under real user traffic and catch regressions early, we will monitor:
 
-$$\mathbf{P50 \text{ and } P95 \text{ Generated Tokens per Completed Interaction Turn, Segmented by Detected Request Language}}$$
+$$\mathbf{P50 \text{ and } P95 \text{ Total Tokens per Completed Turn (Prompt + Completion), Segmented by Detected Language}}$$
 
-- **Why this metric**: Tokens per completed turn directly determines per-request GPU compute time, KV-cache residency, and gross inference cost. 
-- **Trigger Threshold**: If the ratio $\frac{\text{Tokens}_{P50}(\text{Indic})}{\text{Tokens}_{P50}(\text{English})}$ exceeds **1.50×** in production over a rolling 7-day window, it signals either:
-  1. A shift toward high-fragmentation Latin-script transliteration, or
-  2. Model verbosity imbalance (the model generating overly verbose conversational filler in Indic responses).
-  This counter will immediately trigger vocabulary re-tuning or prompt-compression passes.
+- **Distinction Between Input Fertility vs. Output Verbosity**: Our benchmark measured *input encoding fertility* (tokens needed to encode equivalent parallel prompts). In production, however, serving cost is determined by *total turn tokens (prompt encoding + output generation)*. 
+- **Two Distinct Failure Modes Watched on the Same Metric**:
+  1. *Prompt Tokenization Degradation*: A spike in prompt tokens signals a shift toward high-fragmentation Latin-script transliterations (Hinglish/Tanglish).
+  2. *Output Verbosity Drift*: A spike in generated tokens signals model verbosity drift (generating overly verbose conversational filler in Indic responses).
+- **Trigger Threshold**: If the ratio $\frac{\text{Total Tokens}_{P50}(\text{Indic})}{\text{Total Tokens}_{P50}(\text{English})}$ exceeds **1.50×** in production over a rolling 7-day window, it triggers an automated alert for vocabulary re-tuning or prompt-compression passes.

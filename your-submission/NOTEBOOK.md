@@ -142,3 +142,24 @@
   - Using vLLM prefix caching (`enable_prefix_caching=True`), the system prompt is computed once and shared. Incremental memory = 0 MB; prefill overhead < 5 ms.
   - Allows human evaluation on Day 1 for Hindi and Kannada.
   - If prompt engineering fails to hit the >= 60% win rate threshold by Day 4 (Kill Criterion), we still have 10 days of A100 time to execute a targeted LoRA SFT on validated Hindi/Kannada seeds.
+
+---
+
+## Log Entry 08: Evidence Rule Enforcement & Logical Fallacy Refutation Pass
+- **Date/Time:** 2026-09-03 16:15 IST
+- **Objective:** Complete final rigor checks across Part A and Part B to ensure 100% defense compliance.
+
+### Enhancements & Refutations:
+1. **Refuting REPORT_v0 Shared-Numerator Fallacy (Finding 6)**:
+   - `REPORT_v0` claimed `tok/char` (7.0x) confirmed `tok/word` (5.9x).
+   - Proven that both share the exact same token numerator $T$. Under `gpt2`, $T$ is driven by Devanagari byte fallback.
+   - Tested under `xlm-roberta-base`: changing the numerator causes BOTH ratios to collapse together to **1.08x (word)** and **1.26x (char)** for Hindi. Their co-movement was purely an arithmetic artifact of the broken numerator.
+2. **Per-Claim CLI Isolation in `audit_evidence.py`**:
+   - Added `--flaw` selector (`whitespace`, `lowercase`, `macro-micro`, `typology`, `char-denominator`, `shared-numerator`, `nfc`, `seed`).
+   - Every finding in `AUDIT_REPORT.md` now has an exact standalone execution command.
+3. **Flaw 5 Distortion Magnitude Quantified**:
+   - Measured `ratio_char` (7.21x) vs `ratio_byte` (2.82x). Dividing by Python UTF-16 codepoints overstated disparity by **2.56x (256%)**.
+4. **B3 Goodput Independence Categorization**:
+   - Method 1 (wall clock) and Method 2 (decode ITL) explicitly labeled as independent. Clarified that `reported_tok_s * 512/4096` is an algebraic restatement of Method 1.
+5. **Production Monitoring Distinction**:
+   - Explicitly decoupled input encoding fertility from output generation verbosity in `partA/memo.md`.

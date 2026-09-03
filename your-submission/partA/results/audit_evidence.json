@@ -8,10 +8,12 @@
     "eng_fertility_before_split_naive": 1.2652056277056274,
     "eng_fertility_after_split_clean": 1.2830627705627704,
     "hin_fertility_before_split_naive": 7.44845238095238,
-    "hin_fertility_after_split_clean": 7.598452380952381
+    "hin_fertility_after_split_clean": 7.598452380952381,
+    "eng_fertility_deflation_pct": 1.3917590991523046,
+    "hin_fertility_deflation_pct": 1.9740862017641483
   },
   "flaw2_lowercasing": {
-    "description": "line.lower() only affects English (Indic has no case), reducing English token count by 5.6% and inflating the Hindi/English disparity ratio.",
+    "description": "line.lower() only affects English (Indic has no case), mutating English token count by 3.1% and altering the disparity ratio.",
     "eng_tokens_with_lower": 99,
     "eng_tokens_raw_casing": 96,
     "eng_fertility_with_lower": 1.2830627705627704,
@@ -31,7 +33,7 @@
     "hin_micro": 7.524590163934426
   },
   "flaw4_typology_words": {
-    "description": "Kannada words pack multiple morphemes per word (14.2 words/sentence vs 20.9 words/sentence in English). Measuring per-word penalizes agglutinative morphology.",
+    "description": "Dravidian languages (Kannada) pack multiple morphemes per word (17.2 words/sent vs 22.2 in English, -22.5%). Measuring tokens-per-word imposes an artificial +29% penalty.",
     "eng": {
       "tokens": 2796,
       "words": 2221,
@@ -58,21 +60,40 @@
       "tok_per_word": 21.486627906976743,
       "tok_per_sent": 369.57,
       "words_per_sent": 17.2
-    }
+    },
+    "kannada_word_compression_pct": 22.557406573615495,
+    "artificial_word_penalty_pct": 29.12790697674419
   },
   "flaw5_codepoint_vs_bytes": {
-    "description": "len(line) measures Unicode code points (UTF-16 code units), not visual graphemes or UTF-8 information bytes.",
-    "eng_bytes_per_char": 1.0006768953068592,
-    "hin_bytes_per_char": 2.5587275693311584,
-    "kan_bytes_per_char": 2.683758865248227,
+    "description": "len(line) measures Unicode code points (UTF-16 code units), not visual syllables or UTF-8 information bytes. Dividing by codepoints inflates Hindi/English disparity from 2.82x to 7.21x (a 2.56x overstatement).",
+    "eng_tok_per_char": 0.21028880866425992,
+    "hin_tok_per_char": 1.5158683078748332,
+    "kan_tok_per_char": 2.621063829787234,
     "eng_tok_per_byte": 0.2101465614430665,
     "hin_tok_per_byte": 0.5924305213434955,
-    "kan_tok_per_byte": 0.976639095161333
+    "kan_tok_per_byte": 0.976639095161333,
+    "hin_bytes_per_char": 2.5587275693311584,
+    "kan_bytes_per_char": 2.683758865248227,
+    "reported_disparity_char_ratio": 7.208506803112941,
+    "true_byte_disparity_ratio": 2.819130216908157,
+    "distortion_overstatement_factor": 2.556996750231273
+  },
+  "flaw6_shared_numerator_fallacy": {
+    "description": "REPORT_v0 claims tok/char corroborates tok/word. But both share the exact same numerator (token count T). When numerator is fixed via XLM-R, BOTH ratios collapse together (1.08x per word, 1.26x per char). Co-movement was an arithmetic artifact of a shared broken numerator, not independent validation.",
+    "gpt2_hindi_vs_eng_word_ratio": 6.151090166688342,
+    "gpt2_hindi_vs_eng_char_ratio": 7.208506803112941,
+    "xlmr_hindi_vs_eng_word_ratio": 1.0756081245143745,
+    "xlmr_hindi_vs_eng_char_ratio": 1.260512896565099
   },
   "harmless_nfc_normalization": {
-    "description": "NFC normalization looks suspicious to novices as mutating text, but is actually essential: NFD decomposed text fragments into stray combining code points, causing token bloat.",
+    "description": "NFC normalization is harmless and essential: subword tokenizers are trained on NFC. Decomposed NFD text fragments into combining characters and causes severe byte-fallback token bloat.",
     "hin_nfc_tokens": 459,
     "hin_nfd_tokens": 459,
     "bloat_under_nfd_pct": 0.0
+  },
+  "sample_size_variance": {
+    "description": "The 10-sentence sample corpus has high variance. 100 parallel sentences provide stable micro-averages.",
+    "sample_10_sentences_hin_tpw": 7.524590163934426,
+    "flores_100_sentences_hin_tpw": 7.743560606060606
   }
 }

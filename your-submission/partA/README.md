@@ -14,7 +14,7 @@ This report presents an empirical audit of the tokenizer evaluation in `REPORT_v
 Through rigorous application of the Evidence Rule on a verified parallel corpus across 5 languages (English, Hindi, Kannada, Tamil, Telugu) and multiple tokenizers:
 1. **The script is not the bottleneck; the tokenizer vocabulary is.** While `gpt2` shows a 7.31× token inflation on Hindi due to 3-byte fallback tokenization, a multilingual tokenizer with Indic subwords (`xlm-roberta-base`) achieves a **1.28× parity for Hindi** and **1.35×–1.38× parity for Dravidian languages**.
 2. **The previous intern overlooked their own script's capability:** `fertility.py` already supported `--tokenizer hf:<repo_id>`. Running `python fertility.py --tokenizer hf:xlm-roberta-base` on the intern's *own original 10-line sample* immediately yields a ratio of **1.10×** (worse by only 10%, not 500%).
-3. **`fertility.py` contains critical code and metric flaws.** Naive whitespace splitting creates ghost words on irregular spaces; lowercasing artificially inflates English advantage; macro-averaging distorts the aggregate; and measuring tokens per whitespace word severely penalizes agglutinative Dravidian morphology.
+3. **`fertility.py` contains critical code, metric, and logical flaws.** Naive whitespace splitting creates ghost words on irregular spaces; lowercasing artificially inflates English advantage; macro-averaging distorts the aggregate; measuring tokens per whitespace word severely penalizes agglutinative Dravidian morphology; and claiming that tok/char "corroborates" tok/word is an arithmetic fallacy of a shared broken numerator.
 4. **The true decision metric is Tokens per Parallel Sentence (Semantic Information Unit).** Using this metric, serving Indic languages incurs an overhead of only **28% to 38%**, completely invalidating the recommended 600% cost allocation.
 
 ---
@@ -43,61 +43,112 @@ The 10-sentence smoke test in `starter_kit/corpus_sample/` is statistically insu
 
 ## A2. Script & Metric Audit (The Evidence Rule)
 
-Every claimed flaw below is supported by an isolated experiment with exact commands and measured before/after deltas.
+Every claimed flaw below is supported by an isolated experiment with exact per-claim commands and measured before/after deltas.
 
 ```
-Audit Runner: python your-submission/partA/scripts/audit_evidence.py
-Raw Evidence: your-submission/partA/results/audit_evidence.json
+Master Runner: python your-submission/partA/scripts/audit_evidence.py
+Raw Evidence:  your-submission/partA/results/audit_evidence.json
 ```
+
+---
 
 ### 1. Code Bug: Naive Whitespace Splitting (`line.split(" ")`)
+**Exact Command:**
+```powershell
+python your-submission/partA/scripts/audit_evidence.py --flaw whitespace
+```
 - **Location**: `fertility.py:62`: `words = line.split(" ")`
 - **Mechanism**: In Python, `str.split(" ")` with an explicit single-space delimiter splits on *every* individual space character, treating consecutive spaces as empty string tokens (`""`). In contrast, `str.split()` without arguments splits on arbitrary contiguous whitespace and discards empty strings. Both sample files contained double spaces (`eng_sample.txt` line 7: `"books  in"`; `hin_sample.txt` line 10: `"किताबें  अलमारी"`).
-- **Evidence**:
+- **Measured Evidence**:
   - English word count: 79 words with `split(" ")` vs **78 words** with `split()`.
   - Hindi word count: 62 words with `split(" ")` vs **61 words** with `split()`.
-  - English fertility: artificially drops from **1.283** to **1.265** (-1.4%).
-  - Hindi fertility: artificially drops from **7.598** to **7.448** (-2.0%).
-- **Verdict**: Deflates fertility by artificially increasing the denominator with ghost words.
+  - English fertility: artificially drops from **1.283** to **1.265** (-1.39% deflation).
+  - Hindi fertility: artificially drops from **7.598** to **7.448** (-1.97% deflation).
+- **Direction & Magnitude**: Deflates fertility by artificially expanding the denominator with empty ghost words.
+
+---
 
 ### 2. Code Bug: Blanket Lowercasing (`line = line.lower()`)
+**Exact Command:**
+```powershell
+python your-submission/partA/scripts/audit_evidence.py --flaw lowercase
+```
 - **Location**: `fertility.py:60`: `line = line.lower()`
-- **Mechanism**: Indic scripts (Devanagari, Kannada, Tamil, Telugu) have no grammatical concept of upper/lower case; `.lower()` is a complete no-op on Indic strings. However, English tokenization in GPT-2 BPE is highly sensitive to case: common lowercased words are represented as single tokens, while capitalized words (e.g. `"Bengaluru"`, `"March"`, `"Thursday"`, `"NASA"`, `"ISRO"`) often fragment into multiple subwords. Lowercasing English artificially lowers English token counts, exaggerating the perceived disparity.
-- **Evidence**:
+- **Mechanism**: Indic scripts (Devanagari, Kannada, Tamil, Telugu) have no grammatical concept of upper/lower case; `.lower()` is a complete no-op on Indic strings. However, English tokenization in GPT-2 BPE is highly sensitive to case: common lowercased words are represented as single tokens, while capitalized words (e.g. `"Bengaluru"`, `"March"`, `"Thursday"`, `"NASA"`) often fragment into multiple subwords. Lowercasing English artificially lowers English token counts, exaggerating the perceived disparity.
+- **Measured Evidence**:
   - Hindi tokens with lowercasing: 459 tokens; without lowercasing: 459 tokens (0% change).
   - English tokens with lowercasing: 99 tokens; without lowercasing: **96 tokens** (tokenization boundaries shift).
   - English fertility shifts from **1.283** to **1.247**.
   - Reported disparity ratio shifts from **5.92×** to **6.09×**.
-- **Verdict**: Distorts the English baseline by modifying casing on an English-only basis while having zero semantic or token impact on Indic scripts.
+- **Direction & Magnitude**: Asymmetric distortion that mutates the English baseline while having zero effect on Indic scripts.
+
+---
 
 ### 3. Statistical Flaw: Macro-Averaging (Average of Ratios)
+**Exact Command:**
+```powershell
+python your-submission/partA/scripts/audit_evidence.py --flaw macro-micro
+```
 - **Location**: `fertility.py:64-67`: computes `len(tokens)/len(words)` per line and averages the ratios.
 - **Mechanism**: Macro-averaging ($ \frac{1}{N}\sum \frac{T_i}{W_i} $) violates standard statistical aggregation for rate metrics. A 2-word sentence with an outlier token count carries the exact same mathematical weight as a 50-word sentence. The true aggregate corpus fertility is the micro-average: total tokens divided by total words ($ \frac{\sum T_i}{\sum W_i} $).
-- **Evidence**:
+- **Measured Evidence**:
   - English: Macro = 1.247 vs Micro = **1.231** (-1.3% delta).
   - Hindi: Macro = 7.598 vs Micro = **7.525** (-1.0% delta).
-- **Verdict**: Introduces variance and sensitivity to outlier short lines.
+- **Direction & Magnitude**: Introduces sample-size sensitivity and ratio-of-averages skew on short text.
+
+---
 
 ### 4. Conceptual Flaw: "Tokens Per Word" Ignores Linguistic Typology
+**Exact Command:**
+```powershell
+python your-submission/partA/scripts/audit_evidence.py --flaw typology
+```
 - **Mechanism**: English is an analytic language that relies on separate auxiliary words and prepositions ("in the cupboard" = 3 words). Dravidian languages (Kannada, Tamil, Telugu) are highly agglutinative, appending postpositions, case markers, and tense suffixes directly to root nouns and verbs ("ಮನೆಯಲ್ಲಿ" = "in the house" = 1 word).
-- **Evidence on 100 parallel FLORES sentences**:
+- **Measured Evidence on 100 parallel FLORES sentences**:
   - English: **22.2 words/sentence** (2,221 total words).
   - Kannada: **17.2 words/sentence** (1,720 total words) — **22.5% fewer words** for the *identical semantic content*!
   - Under `gpt2`:
     - Kannada tokens/word: **21.49** (reported as 17.07× English).
     - Kannada tokens/sentence: **369.6** (actual ratio: 13.22× English).
-- **Verdict**: Measuring tokens per whitespace word creates an artificial 29% penalty against agglutinative languages solely because they pack more morphemes into fewer whitespace units.
+- **Direction & Magnitude**: Measuring tokens per whitespace word creates an artificial **+29.1% penalty** against agglutinative Dravidian languages solely because their morphemes are bound into single words.
+
+---
 
 ### 5. Conceptual Flaw: "Tokens Per Char" Divides by Python UTF-16 Code Points
+**Exact Command:**
+```powershell
+python your-submission/partA/scripts/audit_evidence.py --flaw char-denominator
+```
 - **Location**: `fertility.py:63`: `chars = len(line)`
-- **Mechanism**: In Python, `len(line)` returns the number of UTF-16 code units / Unicode scalar values, not visual graphemes (aksharas) or UTF-8 bytes. Indic scripts encode complex conjuncts by combining consonants, viramas, and dependent vowel signs (matras). A single visual syllable like *kṣi* (`क्षि`) is 4 Unicode code points (`क` + `्` + `ष` + `ि`).
-- **Evidence**:
-  - English: 1.00 UTF-8 bytes per character.
-  - Hindi: **2.56 UTF-8 bytes per character**; 88.7 grapheme clusters per sentence vs 134.9 Unicode code points.
-  - Kannada: **2.68 UTF-8 bytes per character**; 92.2 grapheme clusters per sentence vs 141.0 Unicode code points.
-- **Verdict**: The `tok/char` metric is an artifact of Unicode codepoint representation rather than physical byte volume, visual grapheme count, or semantic density.
+- **Mechanism**: In Python, `len(line)` returns the number of UTF-16 code units / Unicode scalar values, not visual graphemes (aksharas) or UTF-8 bytes. Indic scripts encode complex conjuncts by combining consonants, viramas, and dependent vowel signs (matras). A single visual syllable like *kṣi* (`क्षि`) is 4 Unicode code points (`क` + `्` + `ष` + `ि`), while English characters are 1 code point.
+- **Measured Evidence & Distortion Magnitude**:
+  - English: 1.00 UTF-8 bytes per character; `tok/char` = 0.210, `tok/byte` = 0.210.
+  - Hindi: 2.56 UTF-8 bytes per character; `tok/char` = 1.516, `tok/byte` = 0.592.
+  - **Disparity Ratio under `tok/char` (Python code points)**: $\frac{1.516}{0.210} = \mathbf{7.21\times}$ (the source of `REPORT_v0`'s "7.0× worse per character" headline).
+  - **Disparity Ratio under `tok/byte` (true information bytes)**: $\frac{0.592}{0.210} = \mathbf{2.82\times}$.
+- **Direction & Magnitude**: Dividing by Python code points instead of information-bearing UTF-8 bytes inflates the reported Hindi/English disparity from **2.82× to 7.21× — an artificial 2.56× (256%) overstatement**.
 
-### 6. The Harmless Element: `unicodedata.normalize("NFC", line)`
+---
+
+### 6. Central Logical Fallacy: The Shared-Numerator Fallacy (False Metric Corroboration)
+**Exact Command:**
+```powershell
+python your-submission/partA/scripts/audit_evidence.py --flaw shared-numerator
+```
+- **The Claim in `REPORT_v0.md`**: Finding 2 stated: *"The tok/char column agrees: 1.579 vs 0.226 = 7.0x worse per character, which confirms the per-word number."* Its recommendation then concluded: *"No further measurement needed - the two metrics agree, so the result is robust."*
+- **The Fallacy**: `tok/word` ($\frac{T}{W}$) and `tok/char` ($\frac{T}{C}$) **SHARE THE EXACT SAME NUMERATOR** ($T = \text{token count}$). Under `gpt2`, that numerator is inflated by a single root cause: Devanagari has no dedicated subword vocabulary, falling back to ~3 byte-level tokens per character. Two ratios sharing an inflated numerator are mathematically guaranteed to co-move. Their agreement is an **arithmetic tautology, NOT independent corroboration or evidence of robustness**.
+- **Measured Evidence**: Independent confirmation requires changing the **NUMERATOR** (swapping the tokenizer), not the denominator:
+  - Under `gpt2` (broken numerator): Hindi `tok/word` ratio = **6.15×**, `tok/char` ratio = **7.21×** (both inflated).
+  - Under `xlm-roberta-base` (fixed numerator): Hindi `tok/word` ratio collapses to **1.08×**, and `tok/char` ratio collapses to **1.26×**!
+- **Verdict**: Swapping the tokenizer collapses both metrics together, proving that the alleged 6×–7× penalty was purely a tokenizer artifact, not a robust linguistic fact.
+
+---
+
+### 7. The Harmless Element: `unicodedata.normalize("NFC", line)`
+**Exact Command:**
+```powershell
+python your-submission/partA/scripts/audit_evidence.py --flaw nfc
+```
 - **Location**: `fertility.py:49`: `line = unicodedata.normalize("NFC", line)`
 - **Why it looks suspicious**: To an inexperienced auditor, normalizing input strings looks like an unnecessary data transformation that might mutate text.
 - **Why it is actually fine and necessary**: Indic scripts can be represented in Unicode as Canonical Decomposition (NFD: base consonant + independent combining mark) or Canonical Composition (NFC: precomposed characters). Modern tokenizers (SentencePiece, BPE) are trained on NFC-normalized text. If un-normalized NFD text is fed into a tokenizer, combining diacritics fail vocabulary lookups and decompose into fallback byte tokens, inflating token counts. NFC normalization is standard industry best practice.
