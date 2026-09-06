@@ -1,6 +1,6 @@
 # Part A: The Tokenizer Audit Report
 
-**Author:** Prasad  
+**Author:** Durga Prasad S  
 **Date:** September 3, 2026  
 **Subject:** Rigorous Audit of `REPORT_v0.md`, `fertility.py`, and Multilingual Tokenizer Economics  
 

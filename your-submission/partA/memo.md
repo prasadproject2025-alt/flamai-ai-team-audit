@@ -1,7 +1,7 @@
 # Executive Memo: Tokenizer Economics & Routing Strategy
 
 **TO:** Leadership Team  
-**FROM:** Prasad — AI Team Intern  
+**FROM:** Durga Prasad S — AI Team Intern  
 **DATE:** September 3, 2026  
 **SUBJECT:** Corrected Multilingual Tokenizer Economics and Production Routing Recommendation  
 

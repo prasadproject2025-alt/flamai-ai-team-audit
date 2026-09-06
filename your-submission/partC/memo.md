@@ -1,7 +1,7 @@
 # Decision Memo: Casualizing Multilingual Assistant Outputs
 
 **TO:** Leadership & Product Team  
-**FROM:** Prasad — AI Team Intern  
+**FROM:** Durga Prasad S — AI Team Intern  
 **DATE:** September 3, 2026  
 **SUBJECT:** Architectural Recommendation: Conversational Tone across 6 Indic Languages  
 

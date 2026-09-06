@@ -1,6 +1,6 @@
 # AI Usage Disclosure (`AI_USAGE.md`)
 
-**Candidate:** Prasad  
+**Candidate:**  Durga Prasad S
 **Assignment:** The Audit  
 
 ---

@@ -1,6 +1,6 @@
 # Part B: Capacity Reconciliation Report
 
-**Author:** Prasad  
+**Author:** Durga Prasad S  
 **Date:** September 3, 2026  
 **Subject:** Hardware Arithmetic, Throughput Anomaly Root-Cause Analysis, and Goodput Reconciliation  
 

@@ -1,6 +1,6 @@
 # Chronological Lab Notebook: The Audit
 
-**Author:** Prasad  
+**Author:** Durga Prasad S  
 **Project:** Flam AI Intern Assignment — The Audit  
 **Status:** Chronological working log (Hypothesis → Experiment → Result → Revision)
 

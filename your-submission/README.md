@@ -1,6 +1,6 @@
 # AI Team Intern Assignment — The Audit
 
-**Author:** Prasad  
+**Author:** Durga Prasad S  
 **Repository:** [flamai-ai-team-audit](https://github.com/prasadproject2025-alt/flamai-ai-team-audit)
 
 Every number in this submission is produced by a script in `partA/scripts/` or
